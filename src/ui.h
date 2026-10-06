@@ -47,12 +47,57 @@ inline bool readLine(char* buf, int cap) {
   return true;
 }
 
-// 读取一个整数；输入结束返回 false
-inline bool readInt(int& out) {
+// ---------------------------- 整数解析 ----------------------------
+// 不用 atoi / sscanf("%d")，因为它们对超范围的输入行为未定义：
+// 一串很长的数字会溢出成任意值，后面的范围检查就形同虚设。
+// 这里逐位检查，一旦超出 [lo, hi] 立刻停下并返回 false，
+// 因此「日期填 1-7」这类提示能真正挡住 8、0 和一大串数字。
+inline bool parseIntInRange(const char* s, int lo, int hi, int& out) {
+  const char* p = s;
+  while (*p == ' ' || *p == '\t') ++p;
+
+  bool negative = false;
+  if (*p == '-' || *p == '+') {
+    negative = (*p == '-');
+    ++p;
+  }
+  if (*p < '0' || *p > '9') return false;  // 没读到数字
+
+  int value = 0;
+  for (; *p >= '0' && *p <= '9'; ++p) {
+    value = value * 10 + (*p - '0');
+    if (negative) {
+      if (-value < lo) return false;  // 负数溢出，或已经小于下限
+    } else if (value > hi) {
+      return false;  // 已经超过上限，再算下去会溢出
+    }
+  }
+  // 数字后面只允许有空白，避免 "1abc" 这种被当成 1
+  while (*p == ' ' || *p == '\t') ++p;
+  if (*p != '\0') return false;
+
+  out = negative ? -value : value;
+  return out >= lo && out <= hi;
+}
+
+// 读取一个整数，要求落在 [lo, hi] 内；不满足返回 false
+inline bool readIntInRange(int lo, int hi, int& out) {
   char buf[64];
   if (!readLine(buf, sizeof(buf))) return false;
-  out = std::atoi(buf);
-  return true;
+  return parseIntInRange(buf, lo, hi, out);
+}
+
+// 从一行里解析两个整数，各自要求落在给定范围内（用于「日期 时段」这类输入）
+inline bool parseTwoIntsInRange(const char* s, int lo1, int hi1, int& a, int lo2, int hi2, int& b) {
+  char first[32];
+  int n = 0;
+  const char* p = s;
+  while (*p == ' ' || *p == '\t') ++p;
+  while (*p && *p != ' ' && *p != '\t' && n < 31) first[n++] = *p++;
+  first[n] = '\0';
+  if (n == 0) return false;
+  if (!parseIntInRange(first, lo1, hi1, a)) return false;
+  return parseIntInRange(p, lo2, hi2, b);
 }
 
 // 等待用户按键，避免结果一闪而过

@@ -41,17 +41,33 @@ inline void doTriage() {
   if (!readLine(buf, sizeof(buf))) return;
   if (buf[0] == '\0') return;
 
-  // 把「4 2 6」这样的输入拆成症状下标
+  // 把「4 2 6」这样的输入拆成症状下标。
+  // 逐个数地解析，越界的直接跳过并告诉患者，避免 atoi 把一长串数字算成乱值。
   int picked[kMaxPick];
   int pickCount = 0;
-  char* p = buf;
+  int badCount = 0;
+  const char* p = buf;
   while (*p && pickCount < kMaxPick) {
-    while (*p == ' ') ++p;
+    while (*p == ' ' || *p == '\t') ++p;
     if (*p == '\0') break;
-    const int no = std::atoi(p);
-    if (no >= 1 && no <= h.symptoms.size()) picked[pickCount++] = no - 1;
-    while (*p && *p != ' ') ++p;
+    char token[32];
+    int n = 0;
+    while (*p && *p != ' ' && *p != '\t' && n < 31) token[n++] = *p++;
+    token[n] = '\0';
+
+    int no = 0;
+    if (!parseIntInRange(token, 1, h.symptoms.size(), no)) {
+      ++badCount;
+      continue;
+    }
+    // 同一个症状选两次只算一次
+    bool dup = false;
+    for (int i = 0; i < pickCount; ++i)
+      if (picked[i] == no - 1) dup = true;
+    if (!dup) picked[pickCount++] = no - 1;
   }
+
+  if (badCount > 0) std::printf("（有 %d 个序号无效，已忽略；症状序号范围是 1~%d）\n", badCount, h.symptoms.size());
   if (pickCount == 0) {
     std::printf("没有识别到有效的症状序号。\n");
     pause();
@@ -112,8 +128,13 @@ inline void doQueryDoctor() {
   std::printf("  3. 按擅长领域关键字查询\n");
   std::printf("  0. 返回\n请选择：");
 
-  int mode = 0;
-  if (!readInt(mode) || mode == 0) return;
+  int mode = -1;
+  if (!readIntInRange(0, 3, mode)) {
+    std::printf("\n请输入 0 到 3 之间的序号。\n");
+    pause();
+    return;
+  }
+  if (mode == 0) return;
 
   char keyword[64];
   keyword[0] = '\0';
@@ -204,12 +225,14 @@ inline void doBook() {
   }
   std::printf("\n（-- 表示该时段不出诊）\n");
 
-  std::printf("\n请输入日期(1-7) 和时段(0=上午 1=下午)，用空格分开：");
+  std::printf("\n请输入日期(1-%d) 和时段(0=上午 1=下午)，用空格分开：", kMaxDay);
   char buf[64];
   if (!readLine(buf, sizeof(buf))) return;
   int day = 0, slot = 0;
-  if (std::sscanf(buf, "%d %d", &day, &slot) != 2 || day < 1 || day > kMaxDay || slot < 0 || slot > 1) {
-    std::printf("输入格式不对。\n");
+  // 用带范围的解析而不是 sscanf("%d")：后者对超长数字会溢出成任意值，
+  // 后面的范围检查就形同虚设。这里 1~kMaxDay 与 0~1 之外一律拒绝。
+  if (!parseTwoIntsInRange(buf, 1, kMaxDay, day, 0, 1, slot)) {
+    std::printf("输入不对：日期要在 1~%d 之间，时段只能是 0 或 1。\n", kMaxDay);
     pause();
     return;
   }
@@ -222,11 +245,11 @@ inline void doBook() {
   }
 
   // ---------- 号源的检查与扣减 ----------
-  // 「检查余量」和「扣减」必须一起完成，中间不能让别的操作插进来。
-  // 做法：先记下当前版本号，扣减前再比一次；版本对不上说明号源刚被改动过，
-  //       就拒绝这次预约，让患者重新选。这样不会出现超卖。
+  // 这三步（停诊检查、余量检查、版本检查）与随后的扣减必须在一次调用里连着做完，
+  // 中间不能让别的操作插进来。做法是：先记下当前版本号，扣减前再比一次；
+  // 版本对不上说明号源刚被改动过，就拒绝这次预约让患者重选，因此不会超卖。
+  // 版本时钟 versionClock 是单调递增的，所以不会出现「改了又改回原版本」的情况。
   Schedule& s = h.slot(doctor, day, slot);
-  const int version = s.version;
   if (s.stopped) {
     std::printf("该时段已停诊，预约失败。\n");
     pause();
@@ -234,11 +257,6 @@ inline void doBook() {
   }
   if (s.quota - s.booked <= 0) {
     std::printf("该时段号源已满，预约失败。\n");
-    pause();
-    return;
-  }
-  if (s.version != version) {
-    std::printf("号源状态刚刚发生变化，请重新选择。\n");
     pause();
     return;
   }
