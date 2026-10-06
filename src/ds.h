@@ -80,6 +80,26 @@ class RingQueue {
   // 按排队次序访问第 i 个元素（0 为队首），用于查看排队进度
   const T& at(int i) const { return data_[(head_ + i) % N]; }
 
+  // 同上的可写版本。队列内部本来就是数组，按下标取引用不破坏先进先出的约束，
+  // 只是允许就地修改队内元素（例如把「已叫号次数」加一），
+  // 省去「逐个出队再放回」的来回搬运。
+  T& at(int i) { return data_[(head_ + i) % N]; }
+
+  // 删除队列中的第 i 个元素（患者看完病离开队列）。
+  // 环形队列本只能从队首出队，这里用「逐个出队再放回」的办法保留其余元素的
+  // 相对次序，代价是 O(n)，队列只有几十个人，可以接受。
+  bool removeAt(int i) {
+    if (i < 0 || i >= n_) return false;
+    const int total = n_;
+    for (int k = 0; k < total; ++k) {
+      T v;
+      if (!pop(v)) break;
+      if (k == i) continue;  // 这一个丢掉，不放回
+      push(v);
+    }
+    return true;
+  }
+
   void clear() { head_ = tail_ = n_ = 0; }
 
  private:
