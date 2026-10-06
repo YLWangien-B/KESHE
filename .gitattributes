@@ -1,0 +1,20 @@
+# 统一换行符，避免不同平台检出时产生整文件差异。
+# Windows 批处理必须是 CRLF，否则 cmd 解析可能出错。
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.c    text eol=lf
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+# 测试数据文件的换行符由生成器决定（\n），不要被检出转换改变
+data/*.txt  text eol=lf
+
+# 二进制文件一律不做转换
+*.doc   binary
+*.docx  binary
+*.pptx  binary
+*.xlsx  binary
+*.png   binary
+*.jpg   binary
