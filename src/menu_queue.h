@@ -1,12 +1,12 @@
 ﻿/* =============================================================================
  *  menu_queue.h  —  功能七：候诊队列
  *
- *  患者到院签到排队，医生依次叫号。四个操作：
+ *  患者到院签到排队，医生依次叫号。五个操作：
  *      签到      患者进入其接诊医生的队伍，拿到排队号
- *      叫号      医生叫队伍里第一个还没被叫过的人
- *      过号      叫了没来，记一次；两次没来就重新排到队尾
+ *      叫号      叫队伍里第一个还没被叫过的人
+ *      过号      叫了没来，记一次；记满两次就重新排到队尾
  *      就诊完成  看完病离开队列
- *  另有「查看队列」随时看到前面还有几个人。
+ *      查看队列  随时能看到前面还有几个人在等
  *
  *  队列用环形队列实现，见 ds.h 的 RingQueue；队列操作在 service_queue.h 的 Queue 类。
  * ========================================================================== */
@@ -20,7 +20,7 @@
 #include "ui.h"
 
 // 打印某位医生当前的候诊队列
-inline void showDoctorQueue(Hospital& h, int doctor) {
+inline void showDoctorQueue(Hospital& h, const int doctor) {
   const int count = Queue::countOf(h, doctor);
   const char* roomName = (h.doctors[doctor].room >= 0) ? h.rooms[h.doctors[doctor].room].name : "未安排诊室";
   std::printf("\n%s %s（%s）的候诊队列，共 %d 人：\n", h.doctors[doctor].code, h.doctors[doctor].name,
@@ -40,18 +40,22 @@ inline void showDoctorQueue(Hospital& h, int doctor) {
   for (int i = 0; i < h.waiting.size() && shown < count; ++i) {
     const Waiting& w = h.waiting.at(i);
     if (w.doctor != doctor) continue;
+
     char no[16], code[16];
     std::snprintf(no, sizeof(no), "%d", w.queueNo);
     std::snprintf(code, sizeof(code), "%s", h.patients[w.patient].code);
     cell(no, 10);
     cell(code, 12);
     cell(h.patients[w.patient].name, 12);
-    if (w.calledCount == 0)
-      std::printf("等待中（前面 %d 人）\n", shown);
-    else if (w.calledCount == 1)
+
+    if (w.calledCount == 0) {
+      // 前面还有几个人在等：已经被叫号的不算，所以单独算一次
+      std::printf("等待中（前面 %d 人）\n", Queue::waitingAhead(h, w.patient, doctor));
+    } else if (w.calledCount == 1) {
       std::printf("已叫号，请进诊室\n");
-    else
-      std::printf("已过号 %d 次\n", w.calledCount - 1);
+    } else {
+      std::printf("已过号 %d 次，再叫不到就重新排队\n", w.calledCount - 1);
+    }
     ++shown;
   }
 }
@@ -77,37 +81,31 @@ inline void doCheckIn() {
   int suggested = -1;
   for (int i = 0; i < h.bookings.size(); ++i) {
     const Booking& b = h.bookings[i];
-    if (b.patient == patient && b.status == BOOKED) {
-      suggested = b.doctor;
-      std::printf("\n提示：%s 在 %s %s 有一条预约（凭证号 %s），就诊时间 周%d%s。\n", h.patients[patient].name,
-                  h.depts[h.doctors[b.doctor].dept].name, h.doctors[b.doctor].name, b.ticket, b.day + 1,
-                  b.slot == 0 ? "上午" : "下午");
-      break;
-    }
+    if (b.patient != patient || b.status != BOOKED) continue;
+    suggested = b.doctor;
+    std::printf("\n提示：%s 在 %s %s 有一条预约（凭证号 %s），就诊时间 周%d%s。\n", h.patients[patient].name,
+                h.depts[h.doctors[b.doctor].dept].name, h.doctors[b.doctor].name, b.ticket, b.day + 1,
+                b.slot == 0 ? "上午" : "下午");
+    break;
   }
 
   std::printf("\n请输入接诊医生编号%s：", suggested >= 0 ? "（直接回车用上面那位）" : "");
   if (!readLine(buf, sizeof(buf))) return;
-  int doctor = -1;
-  if (buf[0] == '\0' && suggested >= 0)
-    doctor = suggested;
-  else
-    doctor = h.findDoctor(buf);
+  const int doctor = (buf[0] == '\0' && suggested >= 0) ? suggested : h.findDoctor(buf);
   if (doctor < 0) {
     std::printf("医生编号不存在。\n");
     pause();
     return;
   }
 
-  const QueueResult r = Queue::checkIn(h, patient, doctor);
-  switch (r) {
+  switch (Queue::checkIn(h, patient, doctor)) {
     case QUEUE_OK: {
-      const int pos = Queue::positionOf(h, patient, doctor);
       std::printf("\n---------- 签到成功 ----------\n");
-      std::printf("  患者  ：%s %s\n", h.patients[patient].code, h.patients[patient].name);
-      std::printf("  诊室  ：%s\n", h.doctors[doctor].room >= 0 ? h.rooms[h.doctors[doctor].room].name : "未安排");
-      std::printf("  医生  ：%s %s\n", h.doctors[doctor].code, h.doctors[doctor].name);
-      std::printf("  排队位置：第 %d 位（前面还有 %d 人）\n", pos, pos - 1);
+      std::printf("  患者    ：%s %s\n", h.patients[patient].code, h.patients[patient].name);
+      std::printf("  诊室    ：%s\n", h.doctors[doctor].room >= 0 ? h.rooms[h.doctors[doctor].room].name : "未安排");
+      std::printf("  医生    ：%s %s\n", h.doctors[doctor].code, h.doctors[doctor].name);
+      std::printf("  排队位置：第 %d 位（前面还有 %d 人）\n", Queue::positionOf(h, patient, doctor),
+                  Queue::waitingAhead(h, patient, doctor));
       break;
     }
     case QUEUE_DUP:
@@ -139,23 +137,29 @@ inline void doCallNext() {
   }
 
   showDoctorQueue(h, doctor);
-
   std::printf("\n按回车键叫下一位...");
   readLine(buf, sizeof(buf));
 
   int patient = -1;
-  const QueueResult r = Queue::callNext(h, doctor, patient);
-  if (r == QUEUE_EMPTY) {
-    std::printf("没有需要叫号的患者了。\n");
-    pause();
-    return;
+  switch (Queue::callNext(h, doctor, patient)) {
+    case QUEUE_OK:
+      std::printf("\n---------- 叫号 ----------\n");
+      std::printf("  请 %s %s（排队号 %d）到 %s 就诊。\n", h.patients[patient].code, h.patients[patient].name,
+                  Queue::queueNoOf(h, patient, doctor),
+                  h.doctors[doctor].room >= 0 ? h.rooms[h.doctors[doctor].room].name : "诊室");
+      std::printf("\n该医生队列里还有 %d 人。\n", Queue::countOf(h, doctor));
+      break;
+    case QUEUE_FIRST_CALLED:
+      std::printf("\n队首的患者还没处理完（在等他进诊室，或已过号一次），不能越过他叫后面的人。\n");
+      std::printf("请等他就诊完（选 4 就诊完成），或用 3 过号处理把他记一次过号。\n");
+      break;
+    case QUEUE_EMPTY:
+      std::printf("\n该医生没有需要叫号的候诊患者了。\n");
+      break;
+    default:
+      std::printf("\n叫号失败。\n");
+      break;
   }
-
-  std::printf("\n---------- 叫号 ----------\n");
-  std::printf("  请 %s %s（排队号 %d）到 %s 就诊。\n", h.patients[patient].code, h.patients[patient].name,
-              h.waiting.at(Queue::positionOf(h, patient, doctor) - 1).queueNo,
-              h.doctors[doctor].room >= 0 ? h.rooms[h.doctors[doctor].room].name : "诊室");
-  std::printf("\n剩余候诊人数：%d\n", Queue::countOf(h, doctor));
   pause();
 }
 
@@ -183,13 +187,12 @@ inline void doPass() {
     return;
   }
 
-  const int before = Queue::positionOf(h, patient, doctor);
-  const bool requeued = Queue::pass(h, patient, doctor);
-  if (requeued) {
-    std::printf("\n%s 已过号两次，重新排到队尾，新位置第 %d 位。\n", h.patients[patient].name,
-                Queue::positionOf(h, patient, doctor));
+  const int queueNo = Queue::queueNoOf(h, patient, doctor);
+  if (Queue::pass(h, patient, doctor)) {
+    std::printf("\n%s（原排队号 %d）已达过号上限，重新排到队尾，新排队号 %d。\n", h.patients[patient].name, queueNo,
+                Queue::queueNoOf(h, patient, doctor));
   } else {
-    std::printf("\n%s 记过一次过号（原位置第 %d 位）。再叫一次不到就重新排队。\n", h.patients[patient].name, before);
+    std::printf("\n%s 记过一次过号。再叫一次不到就会重新排队。\n", h.patients[patient].name);
   }
   pause();
 }
@@ -212,13 +215,12 @@ inline void doFinish() {
   std::printf("\n请输入已完成就诊的患者编号：");
   if (!readLine(buf, sizeof(buf))) return;
   const int patient = h.findPatient(buf);
-  const QueueResult r = Queue::finish(h, patient, doctor);
-  if (r == QUEUE_NOT_FOUND) {
+  if (Queue::finish(h, patient, doctor) == QUEUE_NOT_FOUND) {
     std::printf("该患者不在这个医生的候诊队列里。\n");
     pause();
     return;
   }
-  std::printf("\n%s 已完成就诊，离开候诊队列。当前还有 %d 人候诊。\n", h.patients[patient].name,
+  std::printf("\n%s 已完成就诊，离开候诊队列。该医生队列里还有 %d 人。\n", h.patients[patient].name,
               Queue::countOf(h, doctor));
   pause();
 }
@@ -246,11 +248,12 @@ inline void doViewQueue() {
   // 全院汇总：按科室列出还有多少人在候诊
   std::printf("\n全院候诊情况：\n");
   cell("科室", 16);
-  cell("医生数", 10);
+  cell("出诊医生数", 12);
   std::printf("候诊人数\n");
   int total = 0;
   for (int d = 0; d < h.depts.size(); ++d) {
-    int docs = 0, waiting = 0;
+    int docs = 0;
+    int waiting = 0;
     for (int i = 0; i < h.doctors.size(); ++i) {
       if (h.doctors[i].dept != d) continue;
       ++docs;
@@ -261,7 +264,7 @@ inline void doViewQueue() {
     std::snprintf(docText, sizeof(docText), "%d", docs);
     std::snprintf(waitText, sizeof(waitText), "%d", waiting);
     cell(h.depts[d].name, 16);
-    cell(docText, 10);
+    cell(docText, 12);
     std::printf("%s\n", waitText);
     total += waiting;
   }
@@ -284,9 +287,11 @@ inline void doQueue() {
     std::printf("  0. 返回主菜单\n");
     std::printf("-----------------------------------\n请选择：");
 
-    char buf[32];
-    if (!readLine(buf, sizeof(buf))) return;
-    const int c = std::atoi(buf);
+    int c = -1;
+    if (!readIntInRange(0, 5, c)) {
+      std::printf("\n请输入 0 到 5 之间的序号。\n");
+      continue;
+    }
     if (c == 0) return;
     switch (c) {
       case 1: doCheckIn(); break;
@@ -294,7 +299,6 @@ inline void doQueue() {
       case 3: doPass(); break;
       case 4: doFinish(); break;
       case 5: doViewQueue(); break;
-      default: std::printf("\n请输入 0 到 5 之间的序号。\n"); break;
     }
   }
 }
