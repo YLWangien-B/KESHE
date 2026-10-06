@@ -36,6 +36,7 @@ class Loader {
   }
 
   static int errorCount() { return errors_; }
+  static int overflowCount() { return overflows_; }
 
  private:
   // 类内静态成员：整个装载过程共用的总库地址、文件句柄、目录与错误计数
@@ -43,8 +44,22 @@ class Loader {
   inline static const char* dir_ = "data";
   inline static std::FILE* fp_ = nullptr;
   inline static int errors_ = 0;
+  inline static int overflows_ = 0;
 
   static Hospital& hospital() { return *db_; }
+
+  // ------------------------------ 容量检查 ------------------------------
+  // 全部数据表的容量都是编译期固定的常量。如果数据文件比容量还大，
+  // 记录会被丢弃 —— 这种失败必须是响亮的：静默丢掉几条数据，
+  // 后面查到「某个医生不见了」，很难定位到是容量的问题。
+  static bool ensureRoom(const char* file, const char* what, bool hasRoom) {
+    if (hasRoom) return true;
+    ++errors_;
+    ++overflows_;
+    std::printf("[数据] %s：%s 已超出容量上限，后面的记录被丢弃。\n", file, what);
+    std::printf("       请调大 src/model.h 里对应的 kMax* 常量后重新编译。\n");
+    return false;
+  }
 
   // ------------------------------ 文件与行的读取 ------------------------------
   static bool openFile(const char* name) {
@@ -113,7 +128,7 @@ class Loader {
     if (!openFile("symptoms.txt")) return false;
     char line[256];
     while (nextLine(line, sizeof(line))) {
-      if (h.symptoms.full()) break;
+      if (!ensureRoom("symptoms.txt", "症状表", !h.symptoms.full())) break;
       Symptom s;
       std::snprintf(s.name, sizeof(s.name), "%s", line);
       h.symptoms.push(s);
@@ -129,7 +144,7 @@ class Loader {
     if (!openFile("depts.txt")) return false;
     char line[512];
     while (nextLine(line, sizeof(line))) {
-      if (h.depts.full()) break;
+      if (!ensureRoom("depts.txt", "科室表", !h.depts.full())) break;
       char fields[4][64];
       if (split(line, fields, 4) < 4) {
         warn("depts.txt", "字段不足：", line);
@@ -179,7 +194,7 @@ class Loader {
     if (!openFile("doctors.txt")) return false;
     char line[512];
     while (nextLine(line, sizeof(line))) {
-      if (h.doctors.full()) break;
+      if (!ensureRoom("doctors.txt", "医生表", !h.doctors.full())) break;
       char fields[6][64];
       if (split(line, fields, 6) < 6) {
         warn("doctors.txt", "字段不足：", line);
@@ -250,7 +265,7 @@ class Loader {
     if (!openFile("patients.txt")) return false;
     char line[256];
     while (nextLine(line, sizeof(line))) {
-      if (h.patients.full()) break;
+      if (!ensureRoom("patients.txt", "患者表", !h.patients.full())) break;
       char fields[3][64];
       if (split(line, fields, 3) < 3) {
         warn("patients.txt", "字段不足：", line);
@@ -283,7 +298,7 @@ class Loader {
     int maxNode = 0;
     char line[1024];
     while (nextLine(line, sizeof(line))) {
-      if (h.rooms.full()) break;
+      if (!ensureRoom("layout.txt", "房间表", !h.rooms.full())) break;
       char fields[6][64];
       if (split(line, fields, 6) < 6) {
         warn("layout.txt", "字段不足：", line);
@@ -293,8 +308,26 @@ class Loader {
       std::snprintf(r.code, sizeof(r.code), "%s", fields[0]);
       std::snprintf(r.name, sizeof(r.name), "%s", fields[1]);
       r.floor = std::atoi(fields[2]);
-      r.dept = (fields[3][0] == '-') ? -1 : h.findDept(fields[3]);
+      // 科室字段：'-' 表示公共设施（电梯口、楼梯口），是合法的；
+      // 写了别的编号却查不到，说明数据错了，不能当成「无科室」混过去 ——
+      // 否则这个房间就查不出属于哪个科室，导诊推荐出科室后也找不到它的房间。
+      if (fields[3][0] == '-') {
+        r.dept = -1;
+      } else {
+        r.dept = h.findDept(fields[3]);
+        if (r.dept < 0) {
+          warn("layout.txt", "科室编号不存在：", fields[3]);
+          continue;
+        }
+      }
       r.node = std::atoi(fields[4]);
+      // 节点号会直接用来索引邻接矩阵，必须是非负且在上限内的。
+      // 这里挡一道：否则一个负数会让 maxNode 算错，路网被整体清空，
+      // 表现为「所有路线都查不到」，很难想到是数据里一个负号引起的。
+      if (r.node < 0 || r.node >= RoadNet::kMaxNodes || r.floor < 0) {
+        warn("layout.txt", "节点号或楼层非法：", line);
+        continue;
+      }
       if (r.node + 1 > maxNode) maxNode = r.node + 1;
       const int idx = h.rooms.push(r);
       if (idx < 0) break;

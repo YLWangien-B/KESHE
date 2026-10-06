@@ -63,24 +63,42 @@ void printMenu() {
   std::printf("请选择：");
 }
 
-int main() {
+// 装载数据所在的目录。允许命令行指定，方便用不同的数据集做测试：
+//     hospital.exe            用当前目录下的 data/
+//     hospital.exe bigdata    用当前目录下的 bigdata/
+static const char* g_dataDir = "data";
+
+int main(int argc, char** argv) {
   setupConsole();
-  std::printf("\n正在装载数据...\n");
+  if (argc > 1) g_dataDir = argv[1];
+  std::printf("\n正在装载数据（目录 %s）...\n", g_dataDir);
 
   Hospital& h = db();
-  if (!Loader::loadAll(h, "data")) {
-    std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe data\n");
+  if (!Loader::loadAll(h, g_dataDir)) {
+    std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe %s\n", g_dataDir);
     return 1;
   }
   std::printf("装载完成：科室 %d 个 / 症状 %d 个 / 医生 %d 名 / 患者 %d 名 / 房间 %d 间\n", h.depts.size(),
               h.symptoms.size(), h.doctors.size(), h.patients.size(), h.rooms.size());
-  if (Loader::errorCount() > 0) std::printf("（有 %d 行数据未通过校验，已跳过）\n", Loader::errorCount());
+
+  // 装载出问题时把话说清楚：是某几行数据不对，还是容量不够。
+  // 容量不够是最容易被忽略的一种失败 —— 数据看着在读，记录却在被悄悄丢掉。
+  if (Loader::overflowCount() > 0) {
+    std::printf("\n[警告] 有 %d 处数据超出了容量上限，部分记录没有被装入。\n", Loader::overflowCount());
+    std::printf("       按上面的提示调大 src/model.h 或 src/ds.h 里对应的常量后重新编译。\n");
+  } else if (Loader::errorCount() > 0) {
+    std::printf("（有 %d 行数据未通过校验，已跳过）\n", Loader::errorCount());
+  }
 
   for (;;) {
     printMenu();
-    char buf[32];
-    if (!readLine(buf, sizeof(buf))) break;
-    const int choice = std::atoi(buf);
+    int choice = -1;
+    if (!readIntInRange(0, 7, choice)) {
+      // 读不到输入（管道结束）就直接退出；读到了但不合法就重新提示
+      if (std::feof(stdin)) break;
+      std::printf("\n请输入 0 到 7 之间的序号。\n");
+      continue;
+    }
 
     switch (choice) {
       case 0:
@@ -93,7 +111,6 @@ int main() {
       case 5: doShowSchedule(); break;
       case 6: doRoute(); break;
       case 7: doQueue(); break;
-      default: std::printf("\n请输入 0 到 7 之间的序号。\n"); break;
     }
   }
   return 0;
