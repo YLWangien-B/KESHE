@@ -24,7 +24,7 @@ constexpr int kMaxDay      = 7;    // 排班天数（一周）
 constexpr int kMaxRoom     = 64;   // 房间数（含楼梯口、电梯口）
 constexpr int kMaxFloor    = 4;    // 楼层数
 
-constexpr int kMaxQueuePerDoctor = 32;  // 每位医生的候诊队列长度
+constexpr int kMaxWaiting = 64;    // 候诊队列长度（全院共用一条队列）
 
 // ================================ 科室 ================================
 // 注意：这类字段的长度要按 UTF-8 算——一个汉字占 3 字节。
@@ -100,6 +100,16 @@ struct Booking {
   int  status;
 };
 
+// ================================ 候诊队列 ================================
+// 患者到院签到后按顺序排队，医生依次叫号。
+// 队列里只记「谁在排、排到几号」，其余信息通过预约记录去查，不重复保存。
+struct Waiting {
+  int patient;      // 患者下标（姓名从这里查）
+  int doctor;       // 接诊医生下标（对应诊室从这里查）
+  int queueNo;      // 排队号，从 1 开始，同一医生内递增
+  int calledCount;  // 已叫号次数：0 未叫，1 已叫，≥2 说明过号了
+};
+
 // ================================ 数据总库 ================================
 // 全部数据表集中在一个对象里，各功能模块共享同一份数据，不会出现状态不一致。
 // 由于总库体积超过默认的 1MB 线程栈，程序中以「函数内静态对象」方式持有。
@@ -115,6 +125,14 @@ class Hospital {
   SeqList<Booking, kMaxBook>    bookings;
   SeqList<Room, kMaxRoom>       rooms;
   SeqList<Symptom, kMaxSymptom> symptoms;
+
+  // 候诊队列：用环形队列实现，先进先出，出队的位置可以被后来的患者循环使用。
+  // 全院共用一条队列，靠 doctor 字段区分是哪个诊室的队伍。
+  // 不采用「每位医生一条队列」是因为医生有 64 位、每位队列要 32 个位置，
+  // 那样光队列就要占 150 KB 以上；共用一条队列既省空间，又能直接按
+  // 就诊顺序查看全院候诊情况。
+  RingQueue<Waiting, kMaxWaiting> waiting;
+  int queueSeq = 0;   // 排队号自增序号
 
   RoadNet road;          // 就诊路网（邻接矩阵 + Floyd 预计算的最短路）
 
@@ -134,6 +152,8 @@ class Hospital {
     bookings.clear();
     rooms.clear();
     symptoms.clear();
+    waiting.clear();
+    queueSeq = 0;
     for (int d = 0; d < kMaxDoctor; ++d)
       for (int day = 0; day < kMaxDay; ++day)
         for (int s = 0; s < kMaxSlot; ++s) schedule[d][day][s].assigned = false;

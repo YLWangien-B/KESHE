@@ -20,8 +20,10 @@
 #include "ds.h"
 #include "load.h"
 #include "menu.h"
+#include "menu_queue.h"
 #include "model.h"
 #include "service.h"
+#include "service_queue.h"
 #include "ui.h"
 
 // =============================================================================
@@ -55,6 +57,7 @@ void printMenu() {
   std::printf("  4. 预约管理     查看与取消本人的预约\n");
   std::printf("  5. 排班展示     查看医生一周排班与余号\n");
   std::printf("  6. 就诊路线     查询两个诊室之间的走法\n");
+  std::printf("  7. 候诊队列     签到排队、叫号、过号、就诊完成\n");
   std::printf("  0. 退出\n");
   std::printf("============================================================\n");
   std::printf("请选择：");
@@ -89,7 +92,8 @@ int main() {
       case 4: doManageBooking(); break;
       case 5: doShowSchedule(); break;
       case 6: doRoute(); break;
-      default: std::printf("\n请输入 0 到 6 之间的序号。\n"); break;
+      case 7: doQueue(); break;
+      default: std::printf("\n请输入 0 到 7 之间的序号。\n"); break;
     }
   }
   return 0;
