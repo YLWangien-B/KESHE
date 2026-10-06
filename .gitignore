@@ -25,3 +25,6 @@ build/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Office 打开文档时产生的临时锁文件（~$ 开头），打开 Word 时会出现
+~$*
