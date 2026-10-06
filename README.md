@@ -102,6 +102,9 @@ tools\build.bat
 
 rem 3. 运行
 build\hospital.exe
+
+rem 也可以指定数据目录，便于用另一套数据做测试
+build\hospital.exe 数据目录名
 ```
 
 > **改过源码后，请先跑一次 `tools\fix-encoding.bat`。**
@@ -182,15 +185,15 @@ D1 王秀英（主任医师）的候诊队列，共 2 人：
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
 | `src/ds.h` | 219 | 四种数据结构 |
-| `src/model.h` | 207 | 数据模型与总库 |
-| `src/load.h` | 318 | 数据装载 |
+| `src/model.h` | 209 | 数据模型与总库 |
+| `src/load.h` | 353 | 数据装载与校验 |
 | `src/service.h` | 131 | 导诊与路线两个算法 |
-| `src/service_queue.h` | 121 | 候诊队列的算法 |
-| `src/ui.h` | 57 | 界面辅助 |
-| `src/menu.h` | 434 | 功能 1~6 的界面流程 |
-| `src/menu_queue.h` | 275 | 功能 7 候诊队列的界面流程 |
-| `src/main.cpp` | 92 | 入口与主菜单 |
-| **合计** | **约 1850** | |
+| `src/service_queue.h` | 150 | 候诊队列的算法 |
+| `src/ui.h` | 97 | 界面辅助（含带范围的整数解析） |
+| `src/menu.h` | 450 | 功能 1~6 的界面流程 |
+| `src/menu_queue.h` | 279 | 功能 7 候诊队列的界面流程 |
+| `src/main.cpp` | 106 | 入口与主菜单 |
+| **合计** | **约 2000** | |
 
 ## 七、版本管理
 
