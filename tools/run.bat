@@ -22,7 +22,7 @@ if not exist "%ROOT%\build\hospital.exe" (
     if errorlevel 1 exit /b 1
 )
 
-if not exist "%ROOT%\data\departments.txt" (
+if not exist "%ROOT%\data\symptoms.txt" (
     echo [info] test data not found, generating first...
     call "%TOOLDIR%\build.bat" gen < nul
     if errorlevel 1 exit /b 1
