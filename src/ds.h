@@ -329,7 +329,6 @@ class WeightedGraph {
 //  顶点用名字作主键（症状名、科室下标），因此可以按名字加顶点、加边。
 // =============================================================================
 constexpr int kMaxSymptomName = 24;
-constexpr int kMaxAlias = 4;  // 每个症状最多几个同义词（患者的口语说法）
 
 class BipartiteGraph {
  public:
@@ -343,10 +342,7 @@ class BipartiteGraph {
     edgeCount_ = 0;
     deptCount_ = 0;
     symptomIndex_.clear();
-    for (int i = 0; i < kMaxSymptoms; ++i) {
-      symptomHead_[i] = -1;
-      aliasCount_[i] = 0;
-    }
+    for (int i = 0; i < kMaxSymptoms; ++i) symptomHead_[i] = -1;
     for (int i = 0; i < kMaxDepartments; ++i) deptHead_[i] = -1;
   }
 
@@ -369,7 +365,6 @@ class BipartiteGraph {
     if (symptomCount_ >= kMaxSymptoms) return -1;
     std::snprintf(symptomName_[symptomCount_], kMaxSymptomName, "%s", name);
     symptomHead_[symptomCount_] = -1;
-    aliasCount_[symptomCount_] = 0;
     symptomIndex_.put(symptomName_[symptomCount_], symptomCount_);
     return symptomCount_++;
   }
@@ -388,26 +383,6 @@ class BipartiteGraph {
 
   int departmentCount() const { return deptCount_; }
 
-  // ------------------------------ 同义词 ------------------------------
-  // 患者说的是口语（「胸口发闷」「腰疼」），而症状顶点用的是规范词
-  // （「胸闷」「腰痛」）。给每个症状挂几个同义词，分词时一并识别，
-  // 这样「患者症状与科室描述匹配」才不会被用词差异挡住。
-  bool addAlias(int symptom, const char* alias) {
-    if (symptom < 0 || symptom >= symptomCount_) return false;
-    if (aliasCount_[symptom] >= kMaxAlias) return false;
-    std::snprintf(alias_[symptom][aliasCount_[symptom]], kMaxSymptomName, "%s", alias);
-    ++aliasCount_[symptom];
-    return true;
-  }
-
-  int aliasCount(int symptom) const {
-    return (symptom >= 0 && symptom < symptomCount_) ? aliasCount_[symptom] : 0;
-  }
-
-  const char* aliasName(int symptom, int i) const {
-    if (symptom < 0 || symptom >= symptomCount_ || i < 0 || i >= aliasCount_[symptom]) return "";
-    return alias_[symptom][i];
-  }
 
   // ------------------------------ 边 ------------------------------
   int edgeCount() const { return edgeCount_; }
@@ -483,8 +458,6 @@ class BipartiteGraph {
   int symptomHead_[kMaxSymptoms];  // 症状 -> 科室链的链头
   int deptHead_[kMaxDepartments];  // 科室 -> 症状链的链头
   char symptomName_[kMaxSymptoms][kMaxSymptomName];
-  char alias_[kMaxSymptoms][kMaxAlias][kMaxSymptomName];  // 各症状的同义词（口语说法）
-  int aliasCount_[kMaxSymptoms];
   HashMap symptomIndex_;  // 症状名 -> 症状顶点号
   int symptomCount_ = 0;
   int deptCount_ = 0;

@@ -139,7 +139,7 @@ class Loader {
 
   // ------------------------------ 症状顶点 ------------------------------
   // 症状表就是二部图里症状侧的顶点表，因此直接往图里加顶点。
-  // 行格式：规范词|同义词(逗号分隔，可空)
+  // 行格式：症状名
   static bool loadSymptoms() {
     Hospital& h = hospital();
     if (!openFile("symptoms.txt")) return false;
@@ -147,26 +147,9 @@ class Loader {
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("symptoms.txt", "症状表", h.symptomGraph.symptomCount() < BipartiteGraph::kMaxSymptoms))
         break;
-      char fields[2][160];
-      const int fieldCount = split(line, fields, 2);
-
-      const int symptom = h.symptomGraph.addSymptom(trimSpace(fields[0]));
-      if (symptom < 0) {
-        warn("symptoms.txt", "症状顶点数已达上限，后面的记录被丢弃：", fields[0]);
+      if (h.symptomGraph.addSymptom(trimSpace(line)) < 0) {
+        warn("symptoms.txt", "症状顶点数已达上限，后面的记录被丢弃：", line);
         break;
-      }
-      if (fieldCount < 2) continue;  // 这一行没有同义词，是正常情况
-
-      // 同义词用逗号分隔，逐个挂到这个症状顶点上
-      char* item = fields[1];
-      while (*item) {
-        char* comma = std::strchr(item, ',');
-        if (comma) *comma = '\0';
-        char* alias = trimSpace(item);
-        if (*alias && !h.symptomGraph.addAlias(symptom, alias))
-          warn("symptoms.txt", "同义词个数超限或名字过长：", alias);
-        if (!comma) break;
-        item = comma + 1;
       }
     }
     closeFile();

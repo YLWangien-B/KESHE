@@ -24,43 +24,64 @@
 // =============================================================================
 //  功能一：智能导诊
 //
-//  患者用一段话描述自己的不适（例如「最近胸口发闷，还有点咳嗽」），
-//  程序做两件事：
-//    1) 从这段话里认出已知的症状词（正向最长匹配）；
-//    2) 用认出来的症状在「症状—科室加权二部图」上打分，推荐科室。
+//  患者按序号选出自己的症状，程序在「症状—科室加权二部图」上做一次
+//  邻域加权求和，按得分推荐科室。
 // =============================================================================
 inline void doTriage() {
   Hospital& h = db();
   const BipartiteGraph& g = h.symptomGraph;
   std::printf("\n================ 智能导诊 ================\n");
-  std::printf("请描述您的症状（例如：最近胸口发闷，还有点咳嗽和头晕）。\n");
-  std::printf("也可以只写症状词。直接回车返回。\n\n");
-  std::printf("系统认识的症状词（共 %d 个）：\n", g.symptomCount());
+  std::printf("请按序号选择症状，多个用空格分开（例如：4 2 6），直接回车返回\n\n");
+
   for (int i = 0; i < g.symptomCount(); ++i) {
-    cell(g.symptomName(i), 14);
-    if ((i + 1) % 6 == 0) std::printf("\n");
+    char no[24];
+    std::snprintf(no, sizeof(no), "%d.%s", i + 1, g.symptomName(i));
+    cell(no, 14);
+    if ((i + 1) % 5 == 0) std::printf("\n");
   }
-  std::printf("\n\n请描述症状：");
+  std::printf("\n\n请选择症状：");
 
   char buf[256];
   if (!readLine(buf, sizeof(buf))) return;
   if (buf[0] == '\0') return;
 
-  const TriageResult r = Triage::run(h, buf);
+  // 把「4 2 6」这样的输入拆成症状顶点号。
+  // 逐个数地解析，越界的跳过并告诉患者有几个无效，避免 atoi 把一长串数字算成乱值。
+  int picked[kMaxPickedSymptom];
+  int pickCount = 0;
+  int badCount = 0;
+  const char* p = buf;
+  while (*p && pickCount < kMaxPickedSymptom) {
+    while (*p == ' ' || *p == '\t') ++p;
+    if (*p == '\0') break;
+    char token[32];
+    int n = 0;
+    while (*p && *p != ' ' && *p != '\t' && n < 31) token[n++] = *p++;
+    token[n] = '\0';
 
-  // ---------- 第一步的结果：认出了哪些症状 ----------
-  std::printf("\n---------- 从描述中识别到的症状 ----------\n");
-  if (r.found.count == 0) {
-    std::printf("  没有认出任何已登记的症状词。请换一种说法，或直接写出上面的症状词。\n");
+    int no = 0;
+    if (!parseIntInRange(token, 1, g.symptomCount(), no)) {
+      ++badCount;
+      continue;
+    }
+    // 同一个症状选两次只算一次
+    bool dup = false;
+    for (int i = 0; i < pickCount; ++i)
+      if (picked[i] == no - 1) dup = true;
+    if (!dup) picked[pickCount++] = no - 1;
+  }
+
+  if (badCount > 0)
+    std::printf("（有 %d 个序号无效，已忽略；症状序号范围是 1~%d）\n", badCount, g.symptomCount());
+  if (pickCount == 0) {
+    std::printf("没有识别到有效的症状序号。\n");
     pause();
     return;
   }
-  for (int i = 0; i < r.found.count; ++i) std::printf("  %s", g.symptomName(r.found.hit[i]));
-  std::printf("\n");
 
-  // ---------- 第三步的结果：推荐的科室 ----------
+  const TriageResult r = Triage::run(h, picked, pickCount);
   if (r.count == 0) {
-    std::printf("\n这些症状与任何科室都没有关联，无法给出推荐。\n");
+    std::printf("\n所选症状与任何科室都没有关联，无法给出推荐。\n");
     pause();
     return;
   }
@@ -88,8 +109,8 @@ inline void doTriage() {
     cell(basis, 26);
     std::printf("%s\n", h.depts[it.dept].location);
   }
-  std::printf("\n（得分 = 命中症状与该科室的关联强度之和，见科室描述）\n");
-  std::printf("  %s\n", h.depts[r.items[0].dept].description);
+  std::printf("\n（得分 = 所选症状与该科室的关联强度之和）\n");
+  std::printf("  该科室主诉范围：%s\n", h.depts[r.items[0].dept].description);
 
   // 顺便列出该科室的医生，方便患者接着去预约
   std::printf("\n%s 的出诊医生（前 3 名）：\n", h.depts[r.items[0].dept].name);
