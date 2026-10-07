@@ -6,6 +6,7 @@
  * ========================================================================== */
 #pragma once
 
+#include "ds_sort.h"
 #include "model.h"
 
 // =============================================================================
@@ -101,29 +102,10 @@ class Triage {
     item.matchCount = matchCount;
     for (int k = 0; k < kMaxMatchedPerDept; ++k) item.matched[k] = (k < matchCount) ? matched[k] : -1;
 
-    insertSorted(result, item);
-  }
-
-  // 插入排序：结果最多 5 条，直接插入并保持得分降序
-  static void insertSorted(TriageResult& result, const TriageItem& item) {
-    if (result.count < kMaxTriageResult) {
-      int pos = result.count;
-      while (pos > 0 && result.items[pos - 1].score < item.score) {
-        result.items[pos] = result.items[pos - 1];
-        --pos;
-      }
-      result.items[pos] = item;
-      ++result.count;
-      return;
-    }
-    // 已经满了：只有新项得分高于最后一名时才挤掉它
-    if (item.score <= result.items[kMaxTriageResult - 1].score) return;
-    int pos = kMaxTriageResult - 1;
-    while (pos > 0 && result.items[pos - 1].score < item.score) {
-      result.items[pos] = result.items[pos - 1];
-      --pos;
-    }
-    result.items[pos] = item;
+    // 用通用的插入排序把推荐结果按得分从大到小排好。
+    // 结果集最多 5 条，而且要求得分相同时保持先来后到，插入排序正合适。
+    // 排序算法本身在 ds_sort.h 里，与业务无关，可以单独自检。
+    insertSorted(result.items, result.count, kMaxTriageResult, item, GreaterScore());
   }
 };
 

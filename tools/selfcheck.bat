@@ -1,16 +1,17 @@
 @echo off
 rem ============================================================================
-rem  selfcheck.bat - build and run the self-check program
+rem  selfcheck.bat - build and run the data structure debug program
+rem
+rem  这个程序只测数据结构本身（顺序表、环形队列、散列表、二维数组、
+rem  带权图、带权二部图、插入排序），不涉及任何业务，也不需要数据文件。
 rem
 rem  usage:
-rem    tools\selfcheck.bat              run all 10 groups
-rem    tools\selfcheck.bat 3            run group 3 only
-rem    tools\selfcheck.bat 1 2 6        run groups 1, 2 and 6
-rem    tools\selfcheck.bat nodata       use another data directory for groups 8~10
+rem    tools\selfcheck.bat                  run all structures
+rem    tools\selfcheck.bat SeqList          run one structure
+rem    tools\selfcheck.bat SeqList HashMap  run several
+rem    tools\selfcheck.bat list             show what can be tested
 rem
 rem  Exit code 0 = everything passed, 1 = something failed.
-rem  Must be started from the project root (the program loads data\ relative to
-rem  the current directory), so this script switches there first.
 rem ============================================================================
 setlocal
 
@@ -25,16 +26,6 @@ if not exist "%ROOT%\build\selfcheck.exe" (
     echo [info] selfcheck.exe not found, building first...
     call "%TOOLDIR%\build.bat" selfcheck < nul
     if errorlevel 1 exit /b 1
-)
-
-rem groups 8~10 need the data files
-if not exist "%ROOT%\data\symptoms.txt" (
-    echo [info] test data not found, generating first...
-    call "%TOOLDIR%\build.bat" gen < nul
-    if errorlevel 1 exit /b 1
-    pushd "%ROOT%"
-    build\gen_data.exe data
-    popd
 )
 
 pushd "%ROOT%"
