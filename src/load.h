@@ -30,6 +30,10 @@ class Loader {
     if (!loadSymptoms() || !loadDepts() || !loadDoctors() || !loadSchedules() || !loadPatients() || !loadLayout()) {
       return false;
     }
+    // 科室顶点数已经在 loadDepts 里设定过了，这里绝不能再调一次
+    // setDepartmentCount —— 那个函数会清空全部科室的邻接链头，
+    // 把刚建好的边全丢掉（表现是「从症状查得到科室，从科室查不到症状」）。
+
     // 全部房间与边就位后，用 Floyd 算法一次算出任意两点之间的最短路线
     h.road.floyd();
     return true;
@@ -95,14 +99,17 @@ class Loader {
     return false;
   }
 
-  // 按 '|' 切分一行，最多切出 maxFields 个字段；返回实际字段数
-  static int split(char* line, char fields[][64], int maxFields) {
+  // 按 '|' 切分一行，最多切出 maxFields 个字段；返回实际字段数。
+  // 字段缓冲的宽度 Width 由调用方给出：多数表用 64 就够，
+  // 科室表里那句描述比较长，用 160。
+  template <int Width>
+  static int split(char* line, char fields[][Width], int maxFields) {
     int n = 0;
     char* p = line;
     while (n < maxFields) {
       char* bar = std::strchr(p, '|');
       if (bar) *bar = '\0';
-      std::snprintf(fields[n], 64, "%s", p);
+      std::snprintf(fields[n], Width, "%s", p);
       ++n;
       if (!bar) break;
       p = bar + 1;
@@ -122,43 +129,92 @@ class Loader {
     return n;
   }
 
-  // ------------------------------ 症状表 ------------------------------
+  // 去掉字符串两端的空格（数据文件里常写成「症状名: 权重」）
+  static char* trimSpace(char* s) {
+    while (*s == ' ' || *s == '\t') ++s;
+    int n = static_cast<int>(std::strlen(s));
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = '\0';
+    return s;
+  }
+
+  // ------------------------------ 症状顶点 ------------------------------
+  // 症状表就是二部图里症状侧的顶点表，因此直接往图里加顶点。
+  // 行格式：规范词|同义词(逗号分隔，可空)
   static bool loadSymptoms() {
     Hospital& h = hospital();
     if (!openFile("symptoms.txt")) return false;
     char line[256];
     while (nextLine(line, sizeof(line))) {
-      if (!ensureRoom("symptoms.txt", "症状表", !h.symptoms.full())) break;
-      Symptom s;
-      std::snprintf(s.name, sizeof(s.name), "%s", line);
-      h.symptoms.push(s);
+      if (!ensureRoom("symptoms.txt", "症状表", h.symptomGraph.symptomCount() < BipartiteGraph::kMaxSymptoms))
+        break;
+      char fields[2][160];
+      const int fieldCount = split(line, fields, 2);
+
+      const int symptom = h.symptomGraph.addSymptom(trimSpace(fields[0]));
+      if (symptom < 0) {
+        warn("symptoms.txt", "症状顶点数已达上限，后面的记录被丢弃：", fields[0]);
+        break;
+      }
+      if (fieldCount < 2) continue;  // 这一行没有同义词，是正常情况
+
+      // 同义词用逗号分隔，逐个挂到这个症状顶点上
+      char* item = fields[1];
+      while (*item) {
+        char* comma = std::strchr(item, ',');
+        if (comma) *comma = '\0';
+        char* alias = trimSpace(item);
+        if (*alias && !h.symptomGraph.addAlias(symptom, alias))
+          warn("symptoms.txt", "同义词个数超限或名字过长：", alias);
+        if (!comma) break;
+        item = comma + 1;
+      }
     }
     closeFile();
     return true;
   }
 
-  // ------------------------------ 科室表 ------------------------------
-  // 行格式：编号|名称|位置|关联症状(症状名:权重, 逗号分隔)
+  // ------------------------------ 科室顶点与二部图的边 ------------------------------
+  // 行格式：编号|名称|位置|科室描述|关联症状(症状名:权重, 逗号分隔)
+  //
+  // 科室既是「科室表」里的一条记录，也是二部图科室侧的顶点：科室下标就是顶点号。
+  // 关联症状那一列就是二部图的边表，权重的含义是关联强度（1..5）。
+  //
+  // 注意：科室顶点数必须在读完全部科室之后一次性告诉二部图（见 loadAll）。
+  //       不能在循环里一边加科室一边调用 setDepartmentCount —— 那个函数会把
+  //       所有科室的邻接链头清空，等于把刚建好的边全丢掉；
+  //       而且此时已建的边里会引用还没登记为顶点的科室号，addEdge 也会拒绝。
   static bool loadDepts() {
     Hospital& h = hospital();
     if (!openFile("depts.txt")) return false;
-    char line[512];
+    char line[1024];
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("depts.txt", "科室表", !h.depts.full())) break;
-      char fields[4][64];
-      if (split(line, fields, 4) < 4) {
+      char fields[5][160];
+      if (split(line, fields, 5) < 5) {
         warn("depts.txt", "字段不足：", line);
         continue;
       }
+
       Department d;
       std::snprintf(d.code, sizeof(d.code), "%s", fields[0]);
       std::snprintf(d.name, sizeof(d.name), "%s", fields[1]);
       std::snprintf(d.location, sizeof(d.location), "%s", fields[2]);
-      d.symptomCount = 0;
+      std::snprintf(d.description, sizeof(d.description), "%s", fields[3]);
 
-      // 解析「症状名:权重, 症状名:权重, ...」
-      char* item = fields[3];
-      while (*item && d.symptomCount < kMaxSympPerDept) {
+      const int dept = h.depts.push(d);
+      if (dept < 0) break;
+      h.deptIndex.put(h.depts[dept].code, dept);
+
+      // 二部图科室侧的顶点数取得比实际科室数大一些（留出到容量上限），
+      // 只在第一次调用时设定一次 —— 因为 setDepartmentCount 会清空全部科室的
+      // 邻接链头，读一行调一次就会把前一行的边全丢掉。
+      // 顶点数取上限不影响正确性：它只是「允许出现的科室号范围」，
+      // 真正有多少个科室由 h.depts.size() 决定。
+      if (dept == 0) h.symptomGraph.setDepartmentCount(kMaxDept);
+
+      // 解析「症状名:权重, 症状名:权重, ...」，每一项给二部图加一条边
+      char* item = fields[4];
+      while (*item) {
         char* comma = std::strchr(item, ',');
         if (comma) *comma = '\0';
         char* colon = std::strchr(item, ':');
@@ -167,21 +223,19 @@ class Loader {
           *colon = '\0';
           weight = std::atoi(colon + 1);
         }
-        const int sym = h.findSymptomByName(item);
-        if (sym >= 0) {
-          d.symptoms[d.symptomCount] = sym;
-          d.weights[d.symptomCount] = weight;
-          ++d.symptomCount;
-        } else {
-          warn("depts.txt", "症状词不在 symptoms.txt 中：", item);
+        // 去掉两端的空格，数据文件里可能写成「症状名: 权重」
+        char* name = trimSpace(item);
+        if (*name) {
+          const int symptom = h.symptomGraph.findSymptom(name);
+          if (symptom < 0) {
+            warn("depts.txt", "症状词不在 symptoms.txt 中：", name);
+          } else if (!h.symptomGraph.addEdge(symptom, dept, weight)) {
+            warn("depts.txt", "二部图的边数已达上限，或权重超出 1~5：", name);
+          }
         }
         if (!comma) break;
         item = comma + 1;
       }
-
-      const int idx = h.depts.push(d);
-      if (idx < 0) break;
-      h.deptIndex.put(h.depts[idx].code, idx);
     }
     closeFile();
     return true;
@@ -224,8 +278,9 @@ class Loader {
   }
 
   // ------------------------------ 排班表 ------------------------------
+  // ------------------------------ 排班表 ------------------------------
   // 行格式：医生编号|日期(0..6)|时段(0上午 1下午)|最大接诊数
-  // 排班槽在总库里是三维数组，下标就是主键，装载时直接往对应的格子里填。
+  // 排班是「每位医生一张 日期×时段 二维数组」，装载时按两个下标直接填格子。
   static bool loadSchedules() {
     Hospital& h = hospital();
     if (!openFile("schedules.txt")) return false;
@@ -240,15 +295,20 @@ class Loader {
       const int day = std::atoi(fields[1]);
       const int slot = std::atoi(fields[2]);
       const int quota = std::atoi(fields[3]);
-      if (doctor < 0 || day < 0 || day >= kMaxDay || slot < 0 || slot >= kMaxSlot) {
+      if (doctor < 0 || !ScheduleTable<kMaxDay, kMaxSlot>::validDay(day) ||
+          !ScheduleTable<kMaxDay, kMaxSlot>::validSlot(slot)) {
         warn("schedules.txt", "医生或日期时段非法：", line);
         continue;
       }
-      if (h.slot(doctor, day, slot).assigned) {
+      if (quota < 0) {
+        warn("schedules.txt", "最大接诊数不能为负：", line);
+        continue;
+      }
+      if (h.hasSchedule(doctor, day, slot)) {
         warn("schedules.txt", "同一医生同一时段重复排班：", line);
         continue;
       }
-      Schedule& sc = h.slot(doctor, day, slot);
+      ScheduleSlot& sc = h.slot(doctor, day, slot);
       sc.quota = quota;
       sc.booked = 0;
       sc.version = ++h.versionClock;
@@ -324,7 +384,7 @@ class Loader {
       // 节点号会直接用来索引邻接矩阵，必须是非负且在上限内的。
       // 这里挡一道：否则一个负数会让 maxNode 算错，路网被整体清空，
       // 表现为「所有路线都查不到」，很难想到是数据里一个负号引起的。
-      if (r.node < 0 || r.node >= RoadNet::kMaxNodes || r.floor < 0) {
+      if (r.node < 0 || r.node >= WeightedGraph::kMaxNodes || r.floor < 0) {
         warn("layout.txt", "节点号或楼层非法：", line);
         continue;
       }

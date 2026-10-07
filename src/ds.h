@@ -5,11 +5,13 @@
  *            字符串、数学等库不受限制。因此本文件只实现课程要求的数据结构，
  *            字符串处理直接使用 <cstring>。
  *
- *  本系统用到 4 种数据结构：
- *    SeqList    顺序表       —— 全部数据表的存储结构
- *    RingQueue  环形队列     —— 候诊队列
- *    HashMap    散列表       —— 编号到下标的索引
- *    RoadNet    邻接矩阵图   —— 就诊路线，用 Floyd 算法求最短路
+ *  本系统用到的数据结构：
+ *    SeqList         顺序表     —— 科室、医生、患者、预约、房间等表的存储
+ *    RingQueue       环形队列   —— 候诊队列
+ *    HashMap         散列表     —— 编号/名字到下标的索引
+ *    ScheduleTable   二维数组   —— 医生排班，按「日期 × 时段」索引
+ *    WeightedGraph   带权图     —— 就诊路网（邻接矩阵 + Floyd）
+ *    BipartiteGraph  带权二部图 —— 症状与科室的关联关系
  * ========================================================================== */
 #pragma once
 
@@ -25,6 +27,7 @@ class SeqList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= N; }
+  static constexpr int capacity() { return N; }
 
   T& operator[](int i) { return data_[i]; }
   const T& operator[](int i) const { return data_[i]; }
@@ -60,6 +63,7 @@ class RingQueue {
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= N; }
   int size() const { return n_; }
+  static constexpr int capacity() { return N; }
 
   bool push(const T& v) {
     if (n_ >= N) return false;
@@ -110,13 +114,14 @@ class RingQueue {
 };
 
 // =============================================================================
-//  散列表：键是字符串编号（如 "K01"），值是数据表中的下标。
+//  散列表：键是字符串（编号或名字），值是数据表中的下标。
 //  采用「链地址法」：每个桶挂一条同义词链，删除时不必修补探测链，实现更直观。
 // =============================================================================
 constexpr int kHashBuckets = 211;  // 取质数，减少冲突
+constexpr int kHashKeyLen = 24;
 
 struct HashNode {
-  char key[16];
+  char key[kHashKeyLen];
   int value;
   int next;  // 同义词链的下一个结点，-1 表示链尾
 };
@@ -142,7 +147,7 @@ class HashMap {
       }
     }
     if (nodeCount_ >= kMaxNodes) return false;
-    std::strcpy(node_[nodeCount_].key, key);
+    std::snprintf(node_[nodeCount_].key, kHashKeyLen, "%s", key);
     node_[nodeCount_].value = value;
     node_[nodeCount_].next = head_[b];
     head_[b] = nodeCount_++;
@@ -176,24 +181,77 @@ class HashMap {
 };
 
 // =============================================================================
-//  邻接矩阵图 + Floyd 算法
+//  二维数组：医生排班表，按「日期 × 时段」索引
 //
-//  就诊路线用的图。节点 = 房间（含楼梯口、电梯口），边 = 可行走的路线，权值 = 距离。
-//  用邻接矩阵存边：节点只有几十个，矩阵很小，而且 Floyd 算法正好需要矩阵。
+//  排班信息的主键是「日期 + 时段」，所以二维数组的下标本身就是主键：
+//  查某个时段有没有号、还剩几个号，都是一次下标运算，O(1)。
+//  医生没排班的时段用 assigned 标记为「未使用」，这样「没排班」和
+//  「排班了但号源是 0」两种状态不会混淆。
+// =============================================================================
+constexpr int kMaxSlot = 4;  // 每天时段数：上午 / 下午 / 前夜 / 后夜
+
+struct ScheduleSlot {
+  int quota;       // 最大接诊数
+  int booked;      // 已预约数
+  int version;     // 版本号，用于预约时的并发校验
+  bool assigned;   // 该时段是否有排班
+  bool stopped;    // 是否停诊
+};
+
+template <int Days, int Slots>
+class ScheduleTable {
+ public:
+  ScheduleTable() { clear(); }
+
+  void clear() {
+    for (int d = 0; d < Days; ++d)
+      for (int s = 0; s < Slots; ++s) slot_[d][s].assigned = false;
+  }
+
+  static constexpr int days() { return Days; }
+  static constexpr int slots() { return Slots; }
+  static bool validDay(int day) { return day >= 0 && day < Days; }
+  static bool validSlot(int s) { return s >= 0 && s < Slots; }
+
+  // 按下标取到排班槽。参数合法时就是一次下标运算；不合法时返回 (0,0) 这个
+  // 安全位置，调用方应当先用 validDay/validSlot 判断。
+  ScheduleSlot& slot(int day, int s) { return slot_[validDay(day) ? day : 0][validSlot(s) ? s : 0]; }
+  const ScheduleSlot& slot(int day, int s) const { return slot_[validDay(day) ? day : 0][validSlot(s) ? s : 0]; }
+
+  bool assigned(int day, int s) const { return validDay(day) && validSlot(s) && slot_[day][s].assigned; }
+
+  // 剩余号源；没排班或已停诊都返回 0
+  int remaining(int day, int s) const {
+    if (!assigned(day, s)) return 0;
+    const ScheduleSlot& v = slot_[day][s];
+    if (v.stopped) return 0;
+    const int left = v.quota - v.booked;
+    return left > 0 ? left : 0;
+  }
+
+ private:
+  ScheduleSlot slot_[Days][Slots];
+};
+
+// =============================================================================
+//  带权图（邻接矩阵）+ Floyd 算法
+//
+//  就诊路线用的图。顶点 = 房间（含楼梯口、电梯口），边 = 可行走的路线，权 = 距离。
+//  用邻接矩阵存边：顶点只有几十个，矩阵很小，而且 Floyd 算法正好需要矩阵。
 //
 //  为什么用 Floyd 而不是 Dijkstra：
 //    Floyd 一次算出「任意两点之间的最短路」，路线查询就变成查表 O(1)；
 //    对固定不变的路网来说，这比每次查询都重新跑一遍 Dijkstra 更省时间。
 //    代价是 O(V^3) 的预计算，V 只有几十，实际可忽略。
 // =============================================================================
-class RoadNet {
+class WeightedGraph {
  public:
   static constexpr int kMaxNodes = 128;
   static constexpr int kInf = 100000000;  // 「不可达」的表示
 
-  RoadNet() { init(0); }
+  WeightedGraph() { init(0); }
 
-  // 设定节点个数并清空所有边，权值先全部置为不可达
+  // 设定顶点个数并清空所有边，权值先全部置为不可达
   void init(int nodeCount) {
     n_ = (nodeCount < 0) ? 0 : (nodeCount > kMaxNodes ? kMaxNodes : nodeCount);
     for (int i = 0; i < kMaxNodes; ++i)
@@ -202,7 +260,7 @@ class RoadNet {
 
   int nodeCount() const { return n_; }
 
-  // 添加一条无向边，取较小权值（同一对节点之间可能有多条路线，保留最短的）
+  // 添加一条无向边，取较小权值（同一对顶点之间可能有多条路线，保留最短的）
   bool addEdge(int u, int v, int w) {
     if (u < 0 || u >= n_ || v < 0 || v >= n_ || w < 0) return false;
     if (w < dist_[u][v]) {
@@ -212,16 +270,16 @@ class RoadNet {
     return true;
   }
 
-  // Floyd 算法：三重循环，逐轮允许经过更多的中间节点
+  // Floyd 算法：三重循环，逐轮允许经过更多的中间顶点
   //   dist[i][j] 最终为 i 到 j 的最短距离
-  //   next[i][j] 为 i 到 j 路径上的下一个节点，用于还原整条路线
+  //   next[i][j] 为 i 到 j 路径上的下一个顶点，用于还原整条路线
   void floyd() {
     for (int i = 0; i < n_; ++i)
       for (int j = 0; j < n_; ++j) next_[i][j] = (dist_[i][j] < kInf && i != j) ? j : -1;
 
-    for (int k = 0; k < n_; ++k)             // 中转点
-      for (int i = 0; i < n_; ++i)           // 起点
-        for (int j = 0; j < n_; ++j)         // 终点
+    for (int k = 0; k < n_; ++k)      // 中转点
+      for (int i = 0; i < n_; ++i)    // 起点
+        for (int j = 0; j < n_; ++j)  // 终点
           if (dist_[i][k] + dist_[k][j] < dist_[i][j]) {
             dist_[i][j] = dist_[i][k] + dist_[k][j];
             next_[i][j] = next_[i][k];
@@ -235,7 +293,7 @@ class RoadNet {
 
   bool reachable(int u, int v) const { return distance(u, v) < kInf; }
 
-  // 还原 u 到 v 的路线，把途经节点依次写入 path，返回节点个数（不含 v 则返回 0）
+  // 还原 u 到 v 的路线，把途经顶点依次写入 path，返回顶点个数
   int buildPath(int u, int v, int* path, int cap) const {
     if (!reachable(u, v) || cap <= 0) return 0;
     int n = 0;
@@ -252,4 +310,183 @@ class RoadNet {
   int dist_[kMaxNodes][kMaxNodes];
   int next_[kMaxNodes][kMaxNodes];
   int n_ = 0;
+};
+
+// =============================================================================
+//  带权二部图：症状与科室为顶点，关联强度为边权
+//
+//  这是智能导诊的数学模型（题目实现提示第 1 条）。二部图的特点是顶点分成
+//  互不相邻的两部分，边只存在于两部分之间，所以两侧的顶点分开存：
+//      症状侧   症状表 symptomName_：每个症状是一个顶点
+//      科室侧   由科室表提供，科室下标就是科室顶点号
+//      边集     edge_：每条边的两个端点分属两侧，权值是关联强度
+//
+//  邻接表用「前向星」组织：每条边在边集中占两个结点，两侧各挂一次，
+//  于是「症状 -> 关联的科室」和「科室 -> 关联的症状」都是 O(度) 的遍历：
+//      symptomHead_[症状] -> 该症状关联的科室链
+//      deptHead_[科室]    -> 该科室关联的症状链
+//
+//  顶点用名字作主键（症状名、科室下标），因此可以按名字加顶点、加边。
+// =============================================================================
+constexpr int kMaxSymptomName = 24;
+constexpr int kMaxAlias = 4;  // 每个症状最多几个同义词（患者的口语说法）
+
+class BipartiteGraph {
+ public:
+  static constexpr int kMaxWeight = 5;        // 关联强度的取值范围 1..5
+  static constexpr int kMaxSymptoms = 64;     // 症状侧顶点数上限
+  static constexpr int kMaxDepartments = 16;  // 科室侧顶点数上限
+  static constexpr int kMaxEdges = 512;       // 边数上限（每条边占两个结点）
+
+  void clear() {
+    symptomCount_ = 0;
+    edgeCount_ = 0;
+    deptCount_ = 0;
+    symptomIndex_.clear();
+    for (int i = 0; i < kMaxSymptoms; ++i) {
+      symptomHead_[i] = -1;
+      aliasCount_[i] = 0;
+    }
+    for (int i = 0; i < kMaxDepartments; ++i) deptHead_[i] = -1;
+  }
+
+  // ------------------------------ 症状侧顶点 ------------------------------
+  int symptomCount() const { return symptomCount_; }
+
+  const char* symptomName(int symptom) const {
+    return (symptom >= 0 && symptom < symptomCount_) ? symptomName_[symptom] : "";
+  }
+
+  int findSymptom(const char* name) const {
+    int idx = -1;
+    return symptomIndex_.get(name, idx) ? idx : -1;
+  }
+
+  // 新增症状顶点；名字已存在时返回原有顶点号，保证顶点不重复
+  int addSymptom(const char* name) {
+    const int exist = findSymptom(name);
+    if (exist >= 0) return exist;
+    if (symptomCount_ >= kMaxSymptoms) return -1;
+    std::snprintf(symptomName_[symptomCount_], kMaxSymptomName, "%s", name);
+    symptomHead_[symptomCount_] = -1;
+    aliasCount_[symptomCount_] = 0;
+    symptomIndex_.put(symptomName_[symptomCount_], symptomCount_);
+    return symptomCount_++;
+  }
+
+  // ------------------------------ 科室侧顶点 ------------------------------
+  // 科室顶点由科室表提供，科室下标即科室顶点号。
+  //
+  // 这个方法只在装载开始时调用一次：确定科室侧有多少个顶点（也就确定了边的
+  // 两个端点能取哪些值），并把全部科室的邻接链头清空。
+  // 之后装载过程只往图里加边，不再动顶点数 —— 否则会把已经建好的邻接链清掉，
+  // 表现就是「从症状查得到科室、从科室查不到症状」。
+  void setDepartmentCount(int count) {
+    deptCount_ = (count < 0) ? 0 : (count > kMaxDepartments ? kMaxDepartments : count);
+    for (int i = 0; i < kMaxDepartments; ++i) deptHead_[i] = -1;
+  }
+
+  int departmentCount() const { return deptCount_; }
+
+  // ------------------------------ 同义词 ------------------------------
+  // 患者说的是口语（「胸口发闷」「腰疼」），而症状顶点用的是规范词
+  // （「胸闷」「腰痛」）。给每个症状挂几个同义词，分词时一并识别，
+  // 这样「患者症状与科室描述匹配」才不会被用词差异挡住。
+  bool addAlias(int symptom, const char* alias) {
+    if (symptom < 0 || symptom >= symptomCount_) return false;
+    if (aliasCount_[symptom] >= kMaxAlias) return false;
+    std::snprintf(alias_[symptom][aliasCount_[symptom]], kMaxSymptomName, "%s", alias);
+    ++aliasCount_[symptom];
+    return true;
+  }
+
+  int aliasCount(int symptom) const {
+    return (symptom >= 0 && symptom < symptomCount_) ? aliasCount_[symptom] : 0;
+  }
+
+  const char* aliasName(int symptom, int i) const {
+    if (symptom < 0 || symptom >= symptomCount_ || i < 0 || i >= aliasCount_[symptom]) return "";
+    return alias_[symptom][i];
+  }
+
+  // ------------------------------ 边 ------------------------------
+  int edgeCount() const { return edgeCount_; }
+
+  // 加一条边（症状顶点 —— 科室顶点），权重 1..kMaxWeight。
+  // 同一对顶点重复加边时取较大权重，不重复占边集。
+  bool addEdge(int symptom, int dept, int weight) {
+    if (symptom < 0 || symptom >= symptomCount_) return false;
+    if (dept < 0 || dept >= deptCount_) return false;
+    if (weight < 1 || weight > kMaxWeight) return false;
+
+    for (int e = symptomHead_[symptom]; e != -1; e = edge_[e].symptomNext) {
+      if (edge_[e].dept == dept) {  // 这条边已经存在，只在权重更大时更新
+        if (weight > edge_[e].weight) {
+          edge_[e].weight = weight;
+          for (int r = deptHead_[dept]; r != -1; r = edge_[r].deptNext)
+            if (edge_[r].symptom == symptom) edge_[r].weight = weight;
+        }
+        return true;
+      }
+    }
+    if (edgeCount_ + 2 > kMaxEdges) return false;
+
+    // 一条边在边集中占两个结点，两侧邻接链各用各的 next。
+    // 这一点必须分开：症状链（某症状关联了哪些科室）与科室链（某科室关联了
+    // 哪些症状）是两条独立的链，如果共用一个 next，后建的链就会把前一条覆盖掉，
+    // 结果是「从症状能查到科室，从科室却查不到症状」。
+    const int forSymptom = edgeCount_;
+    const int forDept = edgeCount_ + 1;
+    edge_[forSymptom] = Edge{dept, symptom, weight, -1, symptomHead_[symptom]};
+    edge_[forDept] = Edge{dept, symptom, weight, deptHead_[dept], -1};
+    symptomHead_[symptom] = forSymptom;
+    deptHead_[dept] = forDept;
+    edgeCount_ += 2;
+    return true;
+  }
+
+  // ------------------------------ 邻接表遍历 ------------------------------
+  // 症状 -> 它关联的科室（沿症状侧的链走）
+  int firstDeptOf(int symptom) const {
+    return (symptom >= 0 && symptom < symptomCount_) ? symptomHead_[symptom] : -1;
+  }
+  int nextDeptEdge(int edge) const {
+    return (edge < 0 || edge >= edgeCount_) ? -1 : edge_[edge].symptomNext;
+  }
+  int edgeDept(int edge) const { return (edge < 0 || edge >= edgeCount_) ? -1 : edge_[edge].dept; }
+  int edgeWeight(int edge) const { return (edge < 0 || edge >= edgeCount_) ? 0 : edge_[edge].weight; }
+
+  // 科室 -> 它关联的症状（沿科室侧的链走）
+  int firstSymptomOf(int dept) const { return (dept >= 0 && dept < deptCount_) ? deptHead_[dept] : -1; }
+  int nextSymptomEdge(int edge) const {
+    return (edge < 0 || edge >= edgeCount_) ? -1 : edge_[edge].deptNext;
+  }
+  int edgeSymptom(int edge) const { return (edge < 0 || edge >= edgeCount_) ? -1 : edge_[edge].symptom; }
+
+  // 查两个顶点之间那条边的权值；无边返回 0
+  int weightOf(int symptom, int dept) const {
+    for (int e = firstDeptOf(symptom); e != -1; e = nextDeptEdge(e))
+      if (edgeDept(e) == dept) return edgeWeight(e);
+    return 0;
+  }
+
+ private:
+  struct Edge {
+    int dept;         // 该边在科室侧的端点
+    int symptom;      // 该边在症状侧的端点
+    int weight;       // 关联强度
+    int deptNext;     // 科室侧链上的下一条边（这个结点只挂在科室链上）
+    int symptomNext;  // 症状侧链上的下一条边（-1 表示这条链到尾巴了）
+  };
+
+  Edge edge_[kMaxEdges];
+  int symptomHead_[kMaxSymptoms];  // 症状 -> 科室链的链头
+  int deptHead_[kMaxDepartments];  // 科室 -> 症状链的链头
+  char symptomName_[kMaxSymptoms][kMaxSymptomName];
+  char alias_[kMaxSymptoms][kMaxAlias][kMaxSymptomName];  // 各症状的同义词（口语说法）
+  int aliasCount_[kMaxSymptoms];
+  HashMap symptomIndex_;  // 症状名 -> 症状顶点号
+  int symptomCount_ = 0;
+  int deptCount_ = 0;
+  int edgeCount_ = 0;
 };
