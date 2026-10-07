@@ -50,7 +50,7 @@ set "CFLAGS=/nologo /W4 /EHsc /std:c++17 /utf-8 /D_CRT_SECURE_NO_WARNINGS /I"%RO
 set "RC=0"
 
 if /I "%~1"=="selfcheck" (
-    cl %CFLAGS% /Fe:selfcheck.exe /Fo:selfcheck.obj "%ROOT%\src\selfcheck.cpp"
+    cl %CFLAGS% /Fe:selfcheck.exe "%ROOT%\src\selfcheck.cpp" "%ROOT%\src\db.cpp"
     set "RC=!errorlevel!"
     popd
     exit /b !RC!
@@ -72,7 +72,9 @@ if /I "%~1"=="probe" (
     exit /b !RC!
 )
 
-cl %CFLAGS% /Fe:hospital.exe /Fo:hospital.obj "%ROOT%\src\main.cpp"
+rem hospital + db: db.cpp holds the single instance of Hospital, shared with the
+rem self-check program, so its definition exists in exactly one place.
+cl %CFLAGS% /Fe:hospital.exe "%ROOT%\src\main.cpp" "%ROOT%\src\db.cpp"
 set "RC=!errorlevel!"
 popd
 exit /b %RC%

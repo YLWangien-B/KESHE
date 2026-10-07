@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ============================================================================
+      解决方案（.slnx 格式，Visual Studio 2022 17.14 及以后的版本支持）
+
+      三个可执行程序：
+        Hospital    主程序（医院门诊预约与智能导诊系统）
+        SelfCheck   自检程序（10 组 360 项断言，逐项验证数据结构与算法）
+        GenData     测试数据生成器（生成 data\ 下的 6 个数据文件）
+
+      三个项目各自有一个 main，所以必须分成三个项目，不能合并。
+
+      使用顺序：
+        1) 生成数据   把 GenData   设为启动项目 → 运行（只需一次）
+        2) 看主程序   把 Hospital  设为启动项目 → 运行
+        3) 跑自检     把 SelfCheck 设为启动项目 → 运行
+
+      如果 Visual Studio 版本打不开这个文件，用同目录下的 Hospital.sln
+      （经典格式，所有版本都能打开）。
+     ============================================================================ -->
+<Solution>
+  <Project Path="Hospital.vcxproj" />
+  <Project Path="SelfCheck.vcxproj" />
+  <Project Path="GenData.vcxproj" />
+</Solution>

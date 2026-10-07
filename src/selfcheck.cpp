@@ -38,10 +38,8 @@
 #include "service.h"
 #include "service_queue.h"
 
-Hospital& db() {
-  static Hospital h;
-  return h;
-}
+// 数据总库的实例定义在 db.cpp 里（主程序也用同一份），这里只通过
+// model.h 的 extern 声明使用，不重复定义。
 
 // =============================================================================
 //  自检框架：断言、计数、分组

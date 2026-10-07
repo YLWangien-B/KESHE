@@ -2,7 +2,10 @@
 build/
 
 # 编辑器与 IDE 的本地文件
+# 注意：.gitignore 不支持「规则 + 行尾注释」，注释必须单独占一行，
+#       否则整行会被当成一条匹配不到的规则，形同失效。
 .vs/
+*.sln.docstates
 .vscode/
 *.user
 *.suo
