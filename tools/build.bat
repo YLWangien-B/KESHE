@@ -63,6 +63,15 @@ if /I "%~1"=="gen" (
     exit /b !RC!
 )
 
+rem probe: build the temporary diagnostic program src\_probe.cpp (not part of the
+rem deliverable; used while investigating data structure behaviour)
+if /I "%~1"=="probe" (
+    cl %CFLAGS% /Fe:probe.exe /Fo:probe.obj "%ROOT%\src\_probe.cpp"
+    set "RC=!errorlevel!"
+    popd
+    exit /b !RC!
+)
+
 cl %CFLAGS% /Fe:hospital.exe /Fo:hospital.obj "%ROOT%\src\main.cpp"
 set "RC=!errorlevel!"
 popd

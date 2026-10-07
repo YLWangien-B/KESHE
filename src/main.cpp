@@ -78,8 +78,9 @@ int main(int argc, char** argv) {
     std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe %s\n", g_dataDir);
     return 1;
   }
-  std::printf("装载完成：科室 %d 个 / 症状 %d 个 / 医生 %d 名 / 患者 %d 名 / 房间 %d 间\n", h.depts.size(),
-              h.symptoms.size(), h.doctors.size(), h.patients.size(), h.rooms.size());
+  std::printf("装载完成：科室 %d 个 / 症状 %d 个（二部图 %d 条关联）/ 医生 %d 名 / 患者 %d 名 / 房间 %d 间\n",
+              h.depts.size(), h.symptomGraph.symptomCount(), h.symptomGraph.edgeCount(), h.doctors.size(),
+              h.patients.size(), h.rooms.size());
 
   // 装载出问题时把话说清楚：是某几行数据不对，还是容量不够。
   // 容量不够是最容易被忽略的一种失败 —— 数据看着在读，记录却在被悄悄丢掉。
