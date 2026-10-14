@@ -18,7 +18,8 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$bom=[byte[]](0xEF,0xBB,0xBF); $n=0;" ^
-  "foreach ($root in @('%ROOT%\src','%ROOT%\tools')) {" ^
+  "foreach ($root in @('%ROOT%\src','%ROOT%\tools','%ROOT%\gui\src')) {" ^
+  "  if (-not (Test-Path $root)) { continue };" ^
   "  Get-ChildItem -Path $root -Recurse -Include *.h,*.cpp | ForEach-Object {" ^
   "    $b=[System.IO.File]::ReadAllBytes($_.FullName);" ^
   "    if ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { return }" ^

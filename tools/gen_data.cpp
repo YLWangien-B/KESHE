@@ -52,7 +52,7 @@ const DeptSpec kDepts[] = {
     {"K08", "皮肤科", "内科楼1层西侧", "诊治皮疹、瘙痒、湿疹、痤疮等皮肤疾病", "皮疹:3,瘙痒:3"},
     {"K09", "眼科", "内科楼1层北侧", "诊治视力下降、眼红、眼痛、流泪等眼部疾病", "视力下降:3,眼红:3"},
     {"K10", "耳鼻喉科", "内科楼2层东侧", "诊治耳鸣、鼻塞、咽痛、听力下降等耳鼻喉疾病", "耳鸣:3,鼻塞:2,咽痛:2"},
-    {"K11", "儿科", "内科楼2层西侧", "诊治儿童发热、咳嗽、腹泻等儿童常见病", "发热:3,咳嗽:2,腹泻:2"},
+    {"K11", "儿科", "内科楼2层西侧", "诊治儿童发热、咳嗽、气短、腹泻等儿童常见病", "发热:3,咳嗽:2,气短:2,腹泻:2"},
     {"K12", "中医科", "内科楼2层北侧", "以中医辨证论治调理乏力、失眠等体质问题", "乏力:3,失眠:2"},
 };
 constexpr int kDeptCount = sizeof(kDepts) / sizeof(kDepts[0]);
@@ -197,13 +197,17 @@ void genLayout(const char* dir) {
   openFile(dir, "layout.txt");
   std::fprintf(gOut, "# 就诊路线数据：每行一个房间\n");
   std::fprintf(gOut, "# 房间号|名称|楼层|科室编号(-为公共设施)|路网节点号|相连节点:距离(逗号分隔)\n");
-  std::fprintf(gOut, "# 每层节点号 = 楼层号 * 10 + 房间号；房间 0 是电梯口，房间 8 是楼梯口\n");
+  std::fprintf(gOut, "# 每层节点号 = 楼层号 * 20 + 房间号；房间 0 是电梯口，房间 7 是楼梯口\n");
   std::fprintf(gOut, "# 距离单位为米：同层相邻房间 10 米，跨层 20 米（含上下楼）\n");
 
   for (int fl = 0; fl < kFloorCount; ++fl) {
     for (int r = 0; r < kRoomsPerFloor; ++r) {
       char code[10], name[64], deptCode[8];  // 名称最长约 34 字节，留足余量避免截断汉字
-      const int dept = deptOfRoom(fl, r);
+      // 房间 0（电梯口）与房间 7（楼梯口）是公共设施，科室字段一律写 '-'。
+      // 这一条必须在这里定，不能让 deptOfRoom 说了算：诊室是按「连续 3 间」
+      // 划给科室的，而楼梯口正好落在某个科室的第 3 间上（如 3 层房间 7 落在
+      // 儿科占用的房间 5~7 里），照抄就会生成「楼梯口属于某科室」这种数据。
+      const int dept = (r == 0 || r == 7) ? -1 : deptOfRoom(fl, r);
       if (dept >= 0)
         std::snprintf(deptCode, sizeof(deptCode), "%s", kDepts[dept].code);
       else

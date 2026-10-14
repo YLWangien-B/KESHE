@@ -63,14 +63,13 @@ inline bool parseIntInRange(const char* s, int lo, int hi, int& out) {
   }
   if (*p < '0' || *p > '9') return false;  // 没读到数字
 
+  // 逐位累加，每一步都挡住溢出：hi 最大只有 100000（远小于 INT_MAX / 10），
+  // 所以 value > hi 时已经能确定「超出范围」，不必再算下去。
+  // 注意这里要在乘 10 之前比较，否则 value * 10 + 9 本身就会溢出成负数。
   int value = 0;
   for (; *p >= '0' && *p <= '9'; ++p) {
+    if (value > hi) return false;
     value = value * 10 + (*p - '0');
-    if (negative) {
-      if (-value < lo) return false;  // 负数溢出，或已经小于下限
-    } else if (value > hi) {
-      return false;  // 已经超过上限，再算下去会溢出
-    }
   }
   // 数字后面只允许有空白，避免 "1abc" 这种被当成 1
   while (*p == ' ' || *p == '\t') ++p;

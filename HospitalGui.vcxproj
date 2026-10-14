@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ============================================================================
+     图形界面程序 —— Visual Studio 项目文件
+
+     与 Hospital 项目的区别：
+       1. 源文件多了 gui\src 下的一套界面代码（七项功能的界面 + 楼层平面图）；
+       2. 额外包含第三方库 Dear ImGui（third_party\imgui）；
+       3. 链接 d3d11.lib / d3dcompiler.lib / dxgi.lib（DirectX 11 渲染）；
+       4. 子系统是 Console 而不是 Windows —— 程序仍然打印装载日志，
+          方便命令行排查问题，同时也能弹窗口。
+
+     它和 Hospital 项目共用 src\ds.h / model.h / load.h / service.h / service_queue.h，
+     一行都没有复制。
+     ============================================================================ -->
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{A1B2C3D4-4444-4A5B-9C8D-000000000004}</ProjectGuid>
+    <RootNamespace>HospitalGui</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>$(DefaultPlatformToolset)</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)build\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)build\obj_HospitalGui_$(Platform)_$(Configuration)\</IntDir>
+    <TargetName>hospital_gui</TargetName>
+    <!-- 调试时的工作目录设成工程根，程序才能按相对路径找到 data\ -->
+    <LocalDebuggerWorkingDirectory>$(MSBuildThisFileDirectory)</LocalDebuggerWorkingDirectory>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)src;$(MSBuildThisFileDirectory)gui\src;$(MSBuildThisFileDirectory)third_party\imgui;$(MSBuildThisFileDirectory)third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <IncludePath>$(MSBuildThisFileDirectory)src;$(MSBuildThisFileDirectory)gui\src;$(MSBuildThisFileDirectory)third_party\imgui;$(MSBuildThisFileDirectory)third_party\imgui\backends;$(IncludePath)</IncludePath>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>d3d11.lib;d3dcompiler.lib;dxgi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
+    <ClCompile>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <!-- 界面层：本工程独有 -->
+    <ClCompile Include="gui\src\gui_main.cpp" />
+    <ClCompile Include="gui\src\gui_app.cpp" />
+    <ClCompile Include="gui\src\gui_font.cpp" />
+    <ClCompile Include="gui\src\gui_state.cpp" />
+    <ClCompile Include="gui\src\panel_common.cpp" />
+    <ClCompile Include="gui\src\panel_triage.cpp" />
+    <ClCompile Include="gui\src\panel_doctor.cpp" />
+    <ClCompile Include="gui\src\panel_booking.cpp" />
+    <ClCompile Include="gui\src\panel_manage.cpp" />
+    <ClCompile Include="gui\src\panel_schedule.cpp" />
+    <ClCompile Include="gui\src\panel_route.cpp" />
+    <ClCompile Include="gui\src\panel_queue.cpp" />
+    <ClCompile Include="gui\src\panel_floor.cpp" />
+    <ClCompile Include="gui\src\panel_about.cpp" />
+    <!-- 数据层：与其它两个程序共用 -->
+    <ClCompile Include="src\db.cpp" />
+    <!-- 第三方：Dear ImGui，核心四个 .cpp + 两个后端。
+         这些文件是给多平台准备的，在 /W4 下会刷屏，所以单独降到 /W3；
+         自己写的界面代码仍然是 /W4。 -->
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_dx11.cpp">
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 共用的数据结构层、数据层、业务层 -->
+    <ClInclude Include="src\ds.h" />
+    <ClInclude Include="src\ds_sort.h" />
+    <ClInclude Include="src\model.h" />
+    <ClInclude Include="src\load.h" />
+    <ClInclude Include="src\service.h" />
+    <ClInclude Include="src\service_queue.h" />
+    <!-- 界面层 -->
+    <ClInclude Include="gui\src\gui_app.h" />
+    <ClInclude Include="gui\src\gui_common.h" />
+    <ClInclude Include="gui\src\gui_font.h" />
+    <ClInclude Include="gui\src\gui_state.h" />
+    <ClInclude Include="gui\src\panels.h" />
+    <!-- 第三方 -->
+    <ClInclude Include="third_party\imgui\imgui.h" />
+    <ClInclude Include="third_party\imgui\imgui_internal.h" />
+    <ClInclude Include="third_party\imgui\imconfig.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="third_party\imgui\LICENSE.txt" />
+    <None Include="third_party\README.md" />
+    <None Include="数据结构原型说明.md" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

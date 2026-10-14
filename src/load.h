@@ -26,6 +26,7 @@ class Loader {
     db_ = &h;  // 各 load 函数通过它访问总库，省去逐个传参
     dir_ = dataDir;
     errors_ = 0;
+    overflows_ = 0;
 
     if (!loadSymptoms() || !loadDepts() || !loadDoctors() || !loadSchedules() || !loadPatients() || !loadLayout()) {
       return false;
@@ -56,6 +57,9 @@ class Loader {
   // 全部数据表的容量都是编译期固定的常量。如果数据文件比容量还大，
   // 记录会被丢弃 —— 这种失败必须是响亮的：静默丢掉几条数据，
   // 后面查到「某个医生不见了」，很难定位到是容量的问题。
+  //
+  // 这类失败单独计一个 overflows_，与「某几行数据写错了」区分开：
+  // main.cpp 会据此给出「请调大 kMax* 常量」的专门提示。
   static bool ensureRoom(const char* file, const char* what, bool hasRoom) {
     if (hasRoom) return true;
     ++errors_;
@@ -140,15 +144,20 @@ class Loader {
   // ------------------------------ 症状顶点 ------------------------------
   // 症状表就是二部图里症状侧的顶点表，因此直接往图里加顶点。
   // 行格式：症状名
+  //
+  // 容量检查交给 addSymptom 自己判：它返回 -1 就说明症状顶点数已经到上限，
+  // 多出来的一行必须计入「容量不足」，而不是笼统地记成「数据写错了」。
   static bool loadSymptoms() {
     Hospital& h = hospital();
     if (!openFile("symptoms.txt")) return false;
     char line[256];
     while (nextLine(line, sizeof(line))) {
-      if (!ensureRoom("symptoms.txt", "症状表", h.symptomGraph.symptomCount() < BipartiteGraph::kMaxSymptoms))
-        break;
       if (h.symptomGraph.addSymptom(trimSpace(line)) < 0) {
-        warn("symptoms.txt", "症状顶点数已达上限，后面的记录被丢弃：", line);
+        ++errors_;
+        ++overflows_;
+        std::printf("[数据] symptoms.txt：症状表 已超出容量上限（%d 个），后面的记录被丢弃。\n",
+                    BipartiteGraph::kMaxSymptoms);
+        std::printf("       请调大 src/ds.h 里 BipartiteGraph::kMaxSymptoms 后重新编译。\n");
         break;
       }
     }
@@ -162,8 +171,8 @@ class Loader {
   // 科室既是「科室表」里的一条记录，也是二部图科室侧的顶点：科室下标就是顶点号。
   // 关联症状那一列就是二部图的边表，权重的含义是关联强度（1..5）。
   //
-  // 注意：科室顶点数必须在读完全部科室之后一次性告诉二部图（见 loadAll）。
-  //       不能在循环里一边加科室一边调用 setDepartmentCount —— 那个函数会把
+  // 注意：科室顶点数在第一行科室处一次性告诉二部图（见下面的 dept == 0）。
+  //       不能在循环里每读一行都调一次 setDepartmentCount —— 那个函数会把
   //       所有科室的邻接链头清空，等于把刚建好的边全丢掉；
   //       而且此时已建的边里会引用还没登记为顶点的科室号，addEdge 也会拒绝。
   static bool loadDepts() {
@@ -260,7 +269,6 @@ class Loader {
     return true;
   }
 
-  // ------------------------------ 排班表 ------------------------------
   // ------------------------------ 排班表 ------------------------------
   // 行格式：医生编号|日期(0..6)|时段(0上午 1下午)|最大接诊数
   // 排班是「每位医生一张 日期×时段 二维数组」，装载时按两个下标直接填格子。
