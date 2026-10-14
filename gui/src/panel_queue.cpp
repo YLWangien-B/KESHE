@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  panel_queue.cpp  —  功能 7：候诊队列
  *
  *  界面流程：患者签到 -> 医生叫号 -> （过号 / 就诊完成）。
@@ -134,7 +134,7 @@ bool doctorCombo(const char* id, const Hospital& h, int* value) {
 }  // namespace
 
 // -----------------------------------------------------------------------------
-//  候诊队列的四个动作。界面按钮与自检请求都调这四个函数，逻辑只有一份。
+//  候诊队列的四个动作（签到 / 叫号 / 过号 / 就诊完成）。
 // -----------------------------------------------------------------------------
 void applyCheckIn() {
   GuiState& st = state();
@@ -245,31 +245,6 @@ void applyFinish() {
 void drawQueue() {
   GuiState& st = state();
   Hospital& h = db();
-
-  // 自检参数：requestInt[0]=患者 requestInt[1]=医生
-  if (st.requestInt[0] >= 0) {
-    st.queuePatient = st.requestInt[0];
-    st.requestInt[0] = -1;
-  }
-  if (st.requestInt[1] >= 0) {
-    st.queueDoctor = st.requestInt[1];
-    st.requestInt[1] = -1;
-  }
-
-  // 自检请求：把四个按钮分别当作刚被点过，走的都是上面那四个动作函数
-  if (st.isRequested(ACT_QUEUE_CHECKIN)) {
-    st.takeRequest(ACT_QUEUE_CHECKIN);
-    applyCheckIn();
-  } else if (st.isRequested(ACT_QUEUE_CALL)) {
-    st.takeRequest(ACT_QUEUE_CALL);
-    applyCallNext();
-  } else if (st.isRequested(ACT_QUEUE_PASS)) {
-    st.takeRequest(ACT_QUEUE_PASS);
-    applyPass();
-  } else if (st.isRequested(ACT_QUEUE_FINISH)) {
-    st.takeRequest(ACT_QUEUE_FINISH);
-    applyFinish();
-  }
 
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
   ImGui::TextUnformatted("功能 7  候诊队列");

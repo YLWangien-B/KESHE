@@ -30,7 +30,7 @@ void doctorLabel(const Hospital& h, int d, char* buf, int cap) {
 
 }  // namespace
 
-// 生成预约凭证：界面上的按钮与自检请求都调它，逻辑只有一份。
+// 生成预约凭证。逻辑抽成一个函数，与「先选好再点按钮」的流程分开，便于阅读。
 // 这一段与字符界面 menu.h 里完全一致：三步检查与扣减连着做完，
 // 中间不让出执行权；扣减后立刻换一个新版本号，让此前看到的余号信息作废。
 static void applyBooking() {
@@ -85,27 +85,6 @@ static void applyBooking() {
 void drawBooking() {
   GuiState& st = state();
   Hospital& h = db();
-
-  // 自检参数：requestInt[0]=患者 requestInt[1]=医生 requestInt[2]=日期+时段*7
-  if (st.requestInt[0] >= 0) {
-    st.bookPatient = st.requestInt[0];
-    st.requestInt[0] = -1;
-  }
-  if (st.requestInt[1] >= 0) {
-    st.bookDoctor = st.requestInt[1];
-    st.requestInt[1] = -1;
-  }
-  if (st.requestInt[2] >= 0) {
-    st.bookDay = st.requestInt[2] % kMaxDay;
-    st.bookSlot = st.requestInt[2] / kMaxDay;
-    st.requestInt[2] = -1;
-  }
-
-  // 自检请求：把「生成预约凭证」当作刚被点过
-  if (st.isRequested(ACT_BOOK_SUBMIT)) {
-    st.takeRequest(ACT_BOOK_SUBMIT);
-    applyBooking();
-  }
 
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
   ImGui::TextUnformatted("功能 3  在线预约");

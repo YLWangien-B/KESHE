@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  panel_manage.cpp  —  功能 4：预约管理
  *
  *  查看与取消某个患者的预约记录。
@@ -15,7 +15,7 @@
 
 namespace gui {
 
-// 取消一条预约：界面上的「确认取消」按钮与自检请求都调它，逻辑只有一份。
+// 取消一条预约。逻辑抽成一个函数，与确认弹窗的绘制分开。
 void applyCancelBooking() {
   GuiState& st = state();
   Hospital& h = db();
@@ -49,18 +49,6 @@ void applyCancelBooking() {
 void drawManage() {
   GuiState& st = state();
   Hospital& h = db();
-
-  // 自检参数：requestInt[0] = 要查看的患者
-  if (st.requestInt[0] >= 0) {
-    st.managePatient = st.requestInt[0];
-    st.requestInt[0] = -1;
-  }
-
-  // 自检请求：把「确认取消」当作刚被点过
-  if (st.isRequested(ACT_MANAGE_CANCEL_CONFIRM)) {
-    st.takeRequest(ACT_MANAGE_CANCEL_CONFIRM);
-    applyCancelBooking();
-  }
 
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
   ImGui::TextUnformatted("功能 4  预约管理");

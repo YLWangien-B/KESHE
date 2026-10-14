@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  panel_route.cpp  —  功能 6：就诊路线
  *
  *  算法完全复用 service.h 的 Route::between()：它返回一个 RouteResult，
@@ -55,7 +55,7 @@ bool roomCombo(const char* id, const Hospital& h, int* value) {
 
 }  // namespace
 
-// 查询两个房间之间的路线：按钮与自检请求都调它，逻辑只有一份。
+// 查询两个房间之间的路线。逻辑抽成一个函数，与按钮的绘制分开。
 static void applyRouteQuery() {
   GuiState& st = state();
   Hospital& h = db();
@@ -95,16 +95,6 @@ void drawRoute() {
   GuiState& st = state();
   Hospital& h = db();
 
-  // 自检参数：requestInt[0]=起点房间下标 requestInt[1]=终点房间下标
-  if (st.requestInt[0] >= 0) {
-    st.routeFrom = st.requestInt[0];
-    st.requestInt[0] = -1;
-  }
-  if (st.requestInt[1] >= 0) {
-    st.routeTo = st.requestInt[1];
-    st.requestInt[1] = -1;
-  }
-
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
   ImGui::TextUnformatted("功能 6  就诊路线");
   ImGui::PopStyleColor();
@@ -125,20 +115,6 @@ void drawRoute() {
   roomCombo("##to", h, &st.routeTo);
 
   ImGui::Spacing();
-  // 自检请求：把「查询路线」或「交换起终点」当作刚被点过
-  if (st.isRequested(ACT_ROUTE_RUN)) {
-    st.takeRequest(ACT_ROUTE_RUN);
-    applyRouteQuery();
-  } else if (st.isRequested(ACT_ROUTE_SWAP)) {
-    st.takeRequest(ACT_ROUTE_SWAP);
-    const int t = st.routeFrom;
-    st.routeFrom = st.routeTo;
-    st.routeTo = t;
-    st.routeValid = false;
-    st.routeHighlightCount = 0;
-    std::printf("[GUI] 路线：起终点已交换\n");
-  }
-
   if (ImGui::Button("查询路线", ImVec2(buttonWidth("查询路线"), 0.0f))) applyRouteQuery();
   ImGui::SameLine();
   if (ImGui::Button("交换起终点", ImVec2(buttonWidth("交换起终点"), 0.0f))) {

@@ -12,7 +12,7 @@ rem
 rem  NOTE: comments are kept ASCII-only on purpose. cmd.exe reads a .bat with the
 rem  system code page (936 on a Simplified Chinese Windows), so a UTF-8 file with
 rem  Chinese comments gets garbled and parts of it are executed as commands.
-rem  (run.bat, build.bat and selfcheck.bat follow the same rule.)
+rem  (run.bat and build.bat follow the same rule.)
 rem ============================================================================
 setlocal
 

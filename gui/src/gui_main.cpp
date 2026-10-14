@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
  *  gui_main.cpp  —  图形界面程序的入口与主框架
  *
  *  与字符界面的 main.cpp 是同一个系统的两种「界面层」：
@@ -125,186 +125,6 @@ void reloadData(const char* dir) {
   }
 }
 
-// -----------------------------------------------------------------------------
-//  功能自检（tools\gui_selftest.bat 用）
-//
-//  为什么需要它：GUI 没法靠模拟鼠标来测试 —— 合成点击的坐标要经过 DPI 缩放、
-//  窗口边框、ImGui 逻辑坐标三重换算，非常脆。而「程序化地点一遍界面」只需要
-//  直接设好界面状态、再置一个动作请求，面板会走和真实点击完全相同的 apply() 函数。
-//
-//  做法：脚本里一行一个动作，每帧执行一个，执行前先等 6 帧让界面稳定，
-//  结束时报告一共执行了多少个动作。动作的执行结果由各面板 printf 到控制台。
-// -----------------------------------------------------------------------------
-namespace {
-
-// 选中一个症状（症状顶点下标）。由自检驱动调用，直接设界面状态。
-void selfTestPickSymptom(int symptom) {
-  GuiState& st = state();
-  const int n = db().symptomGraph.symptomCount();
-  if (symptom < 0 || symptom >= n) return;
-  if (st.symptomPicked[symptom]) return;
-  st.symptomPicked[symptom] = true;
-  ++st.symptomCount;
-  std::printf("        （已选中症状 #%d：%s，当前共 %d 个）\n", symptom + 1,
-              db().symptomGraph.symptomName(symptom), st.symptomCount);
-}
-
-// 步骤执行前要额外摆好的界面状态。命名成 PREP_* 而不是塞进 requestInt，
-// 是因为这些值要在「上一帧的动作生效之后」才算得出来 ——
-// 比如取消预约需要知道刚生成的那张凭证号是多少。
-enum SelfTestPrep {
-  PREP_NONE = 0,
-  PREP_MANAGE_LAST_TICKET,  // 把 managePatient 与 manageCancelTicket 指向刚预约的那条记录
-  PREP_ROUTE_BY_CODE,       // 用 roomCodeFrom / roomCodeTo 里的房间号查下标，而不是写死下标
-};
-
-struct SelfTestStep {
-  Page page;
-  int action;      // UiAction，或 -1 表示只切页、不触发动作
-  int symptom;     // >= 0 时选中该号症状（症状顶点下标），-1 表示不动
-  int int0, int1, int2;  // requestInt 的前三个参数，-1 表示不覆盖
-  int prep;        // SelfTestPrep
-  const char* what;
-};
-
-// 路线用房间号指定，而不是写死房间下标 —— 下标会随数据文件的顺序变化，
-// 写错了很难发现（第一次自检就把 RB209 写成了 RB211）。
-const char* g_routeFromCode = nullptr;
-const char* g_routeToCode = nullptr;
-
-// 每一步都写清楚「在测什么」，这样控制台日志本身就是测试记录。
-// 症状下标对着 data\symptoms.txt 的行号：0 发热、1 咳嗽、3 胸闷、5 气短。
-const SelfTestStep kSelfTest[] = {
-    // ---------- 功能 1 智能导诊 ----------
-    {PAGE_TRIAGE, -1, 3, -1, -1, -1, PREP_NONE, "选中症状：胸闷"},
-    {PAGE_TRIAGE, -1, 5, -1, -1, -1, PREP_NONE, "选中症状：气短"},
-    {PAGE_TRIAGE, -1, 1, -1, -1, -1, PREP_NONE, "选中症状：咳嗽"},
-    {PAGE_TRIAGE, ACT_TRIAGE_RUN, -1, -1, -1, -1, PREP_NONE, "点「开始导诊」"},
-    // ---------- 功能 2 医生查询 ----------
-    {PAGE_DOCTOR, -1, -1, 0, -1, -1, PREP_NONE, "切到按科室查询"},
-    {PAGE_DOCTOR, -1, -1, -1, 0, -1, PREP_NONE, "科室选 K01（心血管内科）"},
-    // ---------- 功能 3 在线预约 ----------
-    {PAGE_BOOK, -1, -1, 0, 0, 0, PREP_NONE, "选患者 P1 / 医生 D1 / 周一上午"},
-    {PAGE_BOOK, ACT_BOOK_SUBMIT, -1, -1, -1, -1, PREP_NONE, "点「生成预约凭证」"},
-    // ---------- 功能 4 预约管理 ----------
-    {PAGE_MANAGE, -1, -1, 0, -1, -1, PREP_MANAGE_LAST_TICKET, "查看 P1 的预约记录"},
-    {PAGE_MANAGE, ACT_MANAGE_CANCEL_CONFIRM, -1, -1, -1, -1, PREP_MANAGE_LAST_TICKET, "取消刚生成的预约"},
-    // ---------- 功能 5 排班展示 ----------
-    {PAGE_SCHEDULE, -1, -1, -1, -1, -1, PREP_NONE, "排班展示（按医生一周号源日历）"},
-    // ---------- 功能 6 就诊路线 ----------
-    {PAGE_ROUTE, -1, -1, -1, -1, -1, PREP_ROUTE_BY_CODE, "起点 RA101、终点 RB209（按房间号查）"},
-    {PAGE_ROUTE, ACT_ROUTE_RUN, -1, -1, -1, -1, PREP_NONE, "点「查询路线」"},
-    // ---------- 功能 7 候诊队列 ----------
-    {PAGE_QUEUE, -1, -1, 0, 0, -1, PREP_NONE, "选患者 P1 / 医生 D1"},
-    {PAGE_QUEUE, ACT_QUEUE_CHECKIN, -1, -1, -1, -1, PREP_NONE, "点「患者签到排队」"},
-    {PAGE_QUEUE, ACT_QUEUE_CALL, -1, -1, -1, -1, PREP_NONE, "点「叫下一位」"},
-    {PAGE_QUEUE, ACT_QUEUE_PASS, -1, -1, -1, -1, PREP_NONE, "点「过号处理」（第 1 次）"},
-    {PAGE_QUEUE, ACT_QUEUE_PASS, -1, -1, -1, -1, PREP_NONE, "点「过号处理」（第 2 次，应重新排队）"},
-    {PAGE_QUEUE, ACT_QUEUE_FINISH, -1, -1, -1, -1, PREP_NONE, "点「就诊完成」"},
-    // ---------- 附加两页 ----------
-    {PAGE_FLOOR, -1, -1, -1, -1, -1, PREP_NONE, "楼层平面图"},
-    {PAGE_ABOUT, -1, -1, -1, -1, -1, PREP_NONE, "数据总览"},
-};
-constexpr int kSelfTestCount = static_cast<int>(sizeof(kSelfTest) / sizeof(kSelfTest[0]));
-
-int g_step = -1;      // -1 表示还没开始
-int g_waitFrames = 0;
-const char* g_lastTicket = nullptr;
-
-// 自检用到的房间号（在 main 里赋上真实值）
-void selfTestSetRoute(const char* from, const char* to) {
-  g_routeFromCode = from;
-  g_routeToCode = to;
-}
-
-// 摆好这一步依赖的界面状态
-void selfTestPrep(int prep) {
-  GuiState& st = state();
-  Hospital& h = db();
-  switch (prep) {
-    case PREP_MANAGE_LAST_TICKET:
-      // 指向患者 P1 名下最新的一条预约（也就是上一步刚生成的那张凭证）
-      st.managePatient = 0;
-      st.manageCancelTicket[0] = '\0';
-      for (int i = h.bookings.size() - 1; i >= 0; --i) {
-        if (h.bookings[i].patient != 0) continue;
-        if (h.bookings[i].status != BOOKED) continue;
-        std::snprintf(st.manageCancelTicket, sizeof(st.manageCancelTicket), "%s",
-                      h.bookings[i].ticket);
-        g_lastTicket = h.bookings[i].ticket;
-        std::printf("        （准备取消的凭证号：%s）\n", h.bookings[i].ticket);
-        break;
-      }
-      break;
-    case PREP_ROUTE_BY_CODE: {
-      // 用房间号查下标，不写死下标
-      const int from = h.findRoom(g_routeFromCode ? g_routeFromCode : "");
-      const int to = h.findRoom(g_routeToCode ? g_routeToCode : "");
-      if (from >= 0 && to >= 0) {
-        st.routeFrom = from;
-        st.routeTo = to;
-        std::printf("        （%s -> %s，房间下标 %d -> %d）\n", h.rooms[from].code,
-                    h.rooms[to].code, from, to);
-      } else {
-        std::printf("        （房间号查不到：%s / %s）\n", g_routeFromCode ? g_routeFromCode : "-",
-                    g_routeToCode ? g_routeToCode : "-");
-      }
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-// 跑一步自检：返回 false 表示已经跑完
-bool runOneSelfTestStep() {
-  GuiState& st = state();
-  if (g_step < 0) {
-    g_step = 0;
-    g_waitFrames = 0;
-    std::printf("\n########## 图形界面功能自检：共 %d 步 ##########\n", kSelfTestCount);
-  }
-  if (g_step >= kSelfTestCount) return false;
-
-  // 每步之间留 6 帧，让上一帧的动作生效、界面稳定下来
-  if (g_waitFrames > 0) {
-    --g_waitFrames;
-    return true;
-  }
-
-  const SelfTestStep& s = kSelfTest[g_step];
-  if (s.symptom >= 0) selfTestPickSymptom(s.symptom);
-  if (s.int0 >= 0) st.requestInt[0] = s.int0;
-  if (s.int1 >= 0) st.requestInt[1] = s.int1;
-  if (s.int2 >= 0) st.requestInt[2] = s.int2;
-  selfTestPrep(s.prep);
-  st.requestPage = static_cast<int>(s.page);
-  if (s.action >= 0) st.request = s.action;
-
-  std::printf("[自检 %2d/%d] %s\n", g_step + 1, kSelfTestCount, s.what);
-  ++g_step;
-  g_waitFrames = 6;
-  return true;
-}
-
-}  // namespace
-
-// 自检模式的开关：由命令行参数 --selftest 打开
-bool g_selfTestMode = false;
-bool g_selfTestDone = false;
-
-// 自检每帧推进一步；全部走完返回 false
-bool runSelfTestFrame() {
-  if (g_selfTestDone) return false;
-  if (!runOneSelfTestStep()) {
-    g_selfTestDone = true;
-    std::printf("\n########## 功能自检结束 ##########\n");
-    std::printf("界面会停在这里，直接关窗口即可退出。\n");
-    return false;
-  }
-  return true;
-}
-
 // ------------------------------ 提示条 ------------------------------
 // 这两个函数放在 gui 命名空间里（不是匿名命名空间），因为 renderFrame 在命名空间外，
 // 需要通过 gui:: 限定名调用它们。
@@ -330,12 +150,6 @@ void drawNotice() {
 // ------------------------------ 左侧功能导航 ------------------------------
 void drawSidebar() {
   GuiState& st = state();
-
-  // 自检模式要求切页：直接改，不经过鼠标点击
-  if (st.requestPage >= 0 && st.requestPage < PAGE_COUNT) {
-    st.page = static_cast<Page>(st.requestPage);
-    st.requestPage = -1;
-  }
 
   ImGui::BeginChild("sidebar", ImVec2(212.0f, 0.0f), ImGuiChildFlags_Borders);
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
@@ -394,10 +208,6 @@ void drawSidebar() {
 // -----------------------------------------------------------------------------
 void renderFrame() {
   gui::GuiState& st = gui::state();
-
-  // 自检模式：每帧推进一步（直接改界面状态 + 置动作请求，
-  // 面板会走和真实点击相同的 apply() 函数）
-  if (gui::g_selfTestMode) gui::runSelfTestFrame();
   const ImGuiViewport* vp = ImGui::GetMainViewport();
 
   // 界面尺寸夹在屏幕工作区内。高 DPI 缩放下主视口可能有半个屏幕在窗口外面，
@@ -479,28 +289,17 @@ int main(int argc, char** argv) {
   // 关掉 stdout 缓冲：否则从管道启动时日志会攒在缓冲区里，进程被结束时一个字都看不到
   std::setvbuf(stdout, nullptr, _IONBF, 0);
 
-  // 解析参数：--selftest 进入功能自检模式，其余第一个参数当数据目录
-  const char* dataDir = "data";
-  for (int i = 1; i < argc; ++i) {
-    if (std::strcmp(argv[i], "--selftest") == 0) {
-      gui::g_selfTestMode = true;
-    } else {
-      dataDir = argv[i];
-    }
-  }
+  // 命令行参数：第一个参数当数据目录（便于用另一套数据演示）
+  const char* dataDir = (argc > 1) ? argv[1] : "data";
 
   std::printf("医院门诊预约与智能导诊系统 —— 图形界面版\n");
   std::printf("数据目录：%s\n", dataDir);
-  if (gui::g_selfTestMode)
-    std::printf("模式：功能自检（自动点一遍七项功能 + 楼层平面图 + 数据总览）\n");
 
   if (!gui::init(L"医院门诊预约与智能导诊系统", 1360, 840)) {
     std::printf("[错误] 图形界面初始化失败，程序退出。\n");
     return 1;
   }
   gui::reloadData(dataDir);
-  // 自检的路线用房间号指定，避免写死下标（下标会随数据文件顺序变化）
-  if (gui::g_selfTestMode) gui::selfTestSetRoute("RA101", "RB209");
   gui::run();
   gui::shutdown();
   std::printf("程序正常退出。\n");

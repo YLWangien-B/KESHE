@@ -3,7 +3,7 @@
  *
  *  重要：这里的字段全部是「界面状态」（选了哪个患者、当前在哪一页、上一条提示），
  *  与 Hospital 里的业务数据是两回事。业务数据仍然只有 db() 那一个实例，
- *  由 selfcheck / hospital / hospital_gui 三个程序共用。
+ *  由 hospital（字符界面）与 hospital_gui（图形界面）两个程序共用。
  * ========================================================================== */
 #pragma once
 
@@ -32,33 +32,6 @@ enum Page {
 // 提示条的类型，决定颜色
 enum NoticeKind { NOTICE_NONE = 0, NOTICE_INFO, NOTICE_OK, NOTICE_WARN, NOTICE_ERROR };
 
-// -----------------------------------------------------------------------------
-//  「代点」机制
-//
-//  界面上每一个会改状态的按钮，除了响应用户点击，还要能被程序自己触发一次。
-//  做法是：按钮被点、或者 selfTest 请求了同一个动作时，都去调同一个 apply() 函数。
-//  这样功能自检（tools\gui_selftest.bat）走的是和用户点击完全相同的代码路径，
-//  不是另写一套「测试专用逻辑」。
-//
-//  用处：GUI 的自动化测试没法靠模拟鼠标来完成（合成点击的坐标要经过
-//  DPI 缩放与 ImGui 坐标空间的换算，很脆），直接驱动 ImGui 的输入反而更可靠。
-//  另外还能给后续的「现场变更需求」演示留一个快捷入口。
-// -----------------------------------------------------------------------------
-enum UiAction {
-  ACT_NONE = 0,
-  // 功能 1
-  ACT_TRIAGE_RUN, ACT_TRIAGE_CLEAR,
-  // 功能 3
-  ACT_BOOK_SUBMIT,
-  // 功能 4
-  ACT_MANAGE_CANCEL_CONFIRM,
-  // 功能 6
-  ACT_ROUTE_RUN, ACT_ROUTE_SWAP,
-  // 功能 7
-  ACT_QUEUE_CHECKIN, ACT_QUEUE_CALL, ACT_QUEUE_PASS, ACT_QUEUE_FINISH,
-  ACT_COUNT
-};
-
 struct GuiState {
   // ------------------------------ 全局 ------------------------------
   Page page = PAGE_TRIAGE;
@@ -73,23 +46,6 @@ struct GuiState {
 
   void notify(NoticeKind kind, const char* fmt, ...);
   void clearNotice() { noticeKind = NOTICE_NONE; notice[0] = '\0'; }
-
-  // ------------------------------ 代点机制 ------------------------------
-  // 协议（和自检程序 tools\gui_selftest.bat 之间的约定）：
-  //   1) 先摆参数：直接设 requestPage 与 requestInt 数组，
-  //      —— 选症状由 gui_main.cpp 的 selfTestPickSymptom() 直接设，选患者医生科室走 requestInt；
-  //   2) 再置 request = ACT_xxx；
-  //   3) 面板在对应位置调 takeRequest(ACT_xxx)，命中就清空 request 并执行动作。
-  // 只支持一个动作/帧，已足够覆盖七项功能的基本路径，而且顺序由脚本自己控制。
-  int request = ACT_NONE;
-  int requestPage = -1;        // >= 0 时强制切页（自检用）
-  int requestInt[8] = {};      // 整数类参数：按各面板的约定解释；-1 不覆盖
-
-  void requestAction(UiAction a) { request = static_cast<int>(a); }
-  void takeRequest(UiAction mine) {
-    if (request == static_cast<int>(mine)) request = ACT_NONE;
-  }
-  bool isRequested(UiAction mine) const { return request == static_cast<int>(mine); }
 
   // ------------------------------ 功能 1 智能导诊 ------------------------------
   bool symptomPicked[BipartiteGraph::kMaxSymptoms] = {};

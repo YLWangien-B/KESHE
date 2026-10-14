@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
  *  panel_triage.cpp  —  功能 1：智能导诊
  *
  *  界面流程：患者在症状表里点选症状 -> 调 Triage::run() -> 按得分列出推荐科室。
@@ -31,21 +31,21 @@ int collectPicked(int* out, int cap) {
 
 }  // namespace
 
-// 执行一个动作。按钮被点、或自检请求了同一个动作时，都走这里 —— 只有一份实现。
-static void applyTriage(UiAction act) {
+// 清空症状选择
+static void clearPicked() {
+  GuiState& st = state();
+  for (int i = 0; i < BipartiteGraph::kMaxSymptoms; ++i) st.symptomPicked[i] = false;
+  st.symptomCount = 0;
+  st.triageValid = false;
+  st.lastDept = -1;
+  st.clearNotice();
+  std::printf("[GUI] 导诊：已清空症状选择\n");
+}
+
+// 开始导诊：把选中的症状交给 Triage::run，结果存进界面状态
+static void runTriage() {
   GuiState& st = state();
   Hospital& h = db();
-  if (act == ACT_TRIAGE_CLEAR) {
-    for (int i = 0; i < BipartiteGraph::kMaxSymptoms; ++i) st.symptomPicked[i] = false;
-    st.symptomCount = 0;
-    st.triageValid = false;
-    st.lastDept = -1;
-    st.clearNotice();
-    std::printf("[GUI] 导诊：已清空症状选择\n");
-    return;
-  }
-  if (act != ACT_TRIAGE_RUN) return;
-
   int picked[BipartiteGraph::kMaxSymptoms];
   const int n = collectPicked(picked, kMaxPickedSymptom);
   st.triage = Triage::run(h, picked, n);
@@ -73,16 +73,6 @@ void drawTriage() {
   ImGui::TextWrapped("数学模型：症状—科室加权二部图。选中症状即选中症状侧顶点，"
                       "对每个科室沿邻接链做一次邻域加权求和，按得分推荐。");
   ImGui::Separator();
-
-  // 自检请求：把「开始导诊」或「清空选择」当作刚被点过。
-  // 注意只取一个动作，取到就清空 request，避免同一帧里重复触发。
-  if (st.isRequested(ACT_TRIAGE_RUN)) {
-    st.takeRequest(ACT_TRIAGE_RUN);
-    applyTriage(ACT_TRIAGE_RUN);
-  } else if (st.isRequested(ACT_TRIAGE_CLEAR)) {
-    st.takeRequest(ACT_TRIAGE_CLEAR);
-    applyTriage(ACT_TRIAGE_CLEAR);
-  }
 
   // ------------------------------ 症状选择区 ------------------------------
   ImGui::TextUnformatted("请选择您的症状（可多选）：");
@@ -112,17 +102,11 @@ void drawTriage() {
   ImGui::SameLine();
   const bool canRun = (st.symptomCount > 0);
   if (!canRun) ImGui::BeginDisabled();
-  if (ImGui::Button("开始导诊", ImVec2(buttonWidth("开始导诊"), 0.0f))) applyTriage(ACT_TRIAGE_RUN);
+  if (ImGui::Button("开始导诊", ImVec2(buttonWidth("开始导诊"), 0.0f))) runTriage();
   if (!canRun) ImGui::EndDisabled();
 
   ImGui::SameLine();
-  if (ImGui::Button("清空选择", ImVec2(buttonWidth("清空选择"), 0.0f))) {
-    for (int i = 0; i < BipartiteGraph::kMaxSymptoms; ++i) st.symptomPicked[i] = false;
-    st.symptomCount = 0;
-    st.triageValid = false;
-    st.lastDept = -1;
-    st.clearNotice();
-  }
+  if (ImGui::Button("清空选择", ImVec2(buttonWidth("清空选择"), 0.0f))) clearPicked();
   ImGui::SameLine();
   ImGui::TextDisabled("（打分时最多参考前 %d 个选中的症状，多选的其余症状不参与）", kMaxPickedSymptom);
 

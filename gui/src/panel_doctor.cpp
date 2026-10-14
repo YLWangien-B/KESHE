@@ -40,16 +40,6 @@ void drawDoctorQuery() {
   GuiState& st = state();
   Hospital& h = db();
 
-  // 自检参数：requestInt[0] = 查询方式，requestInt[1] = 要选的科室
-  if (st.requestInt[0] >= 0) {
-    st.queryMode = st.requestInt[0];
-    st.requestInt[0] = -1;
-  }
-  if (st.requestInt[1] >= 0) {
-    st.queryDept = st.requestInt[1];
-    st.requestInt[1] = -1;
-  }
-
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.72f, 0.95f, 1.0f));
   ImGui::TextUnformatted("功能 2  医生查询");
   ImGui::PopStyleColor();
