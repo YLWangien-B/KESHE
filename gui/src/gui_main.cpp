@@ -159,9 +159,10 @@ void drawSidebar() {
   ImGui::Separator();
   ImGui::Spacing();
 
+  // 七项功能各一页（「就诊路线」里含楼层平面图），外加一页数据总览
   static const char* kLabels[PAGE_COUNT] = {
-      "1  智能导诊", "2  医生查询", "3  在线预约", "4  预约管理", "5  排班展示",
-      "6  就诊路线", "7  候诊队列", "楼层平面图", "数据总览",
+      "1  智能导诊", "2  医生查询", "3  在线预约", "4  预约管理",
+      "5  排班展示", "6  就诊路线", "7  候诊队列", "数据总览",
   };
   for (int i = 0; i < PAGE_COUNT; ++i) {
     const bool selected = (static_cast<int>(st.page) == i);
@@ -269,7 +270,6 @@ void renderFrame() {
       case gui::PAGE_SCHEDULE: gui::drawSchedule(); break;
       case gui::PAGE_ROUTE:    gui::drawRoute(); break;
       case gui::PAGE_QUEUE:    gui::drawQueue(); break;
-      case gui::PAGE_FLOOR:    gui::drawFloorPlan(); break;
       case gui::PAGE_ABOUT:    gui::drawAbout(); break;
       default: break;
     }

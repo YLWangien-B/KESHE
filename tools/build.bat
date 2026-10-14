@@ -127,7 +127,7 @@ cl /nologo /W4 /EHsc /std:c++17 /utf-8 /D_CRT_SECURE_NO_WARNINGS /Isrc /Igui\src
     gui\src\gui_main.cpp gui\src\gui_app.cpp gui\src\gui_font.cpp gui\src\gui_state.cpp ^
     gui\src\panel_common.cpp gui\src\panel_triage.cpp gui\src\panel_doctor.cpp ^
     gui\src\panel_booking.cpp gui\src\panel_manage.cpp gui\src\panel_schedule.cpp ^
-    gui\src\panel_route.cpp gui\src\panel_queue.cpp gui\src\panel_floor.cpp ^
+    gui\src\panel_route.cpp gui\src\panel_queue.cpp ^
     gui\src\panel_about.cpp src\db.cpp
 if errorlevel 1 ( popd & exit /b 1 )
 
@@ -149,7 +149,7 @@ link /nologo /OUT:"build\hospital_gui.exe" ^
     "build\obj_gui\panel_triage.obj" "build\obj_gui\panel_doctor.obj" ^
     "build\obj_gui\panel_booking.obj" "build\obj_gui\panel_manage.obj" ^
     "build\obj_gui\panel_schedule.obj" "build\obj_gui\panel_route.obj" ^
-    "build\obj_gui\panel_queue.obj" "build\obj_gui\panel_floor.obj" ^
+    "build\obj_gui\panel_queue.obj" ^
     "build\obj_gui\panel_about.obj" "build\obj_gui\db.obj" ^
     "build\obj_gui\imgui.obj" "build\obj_gui\imgui_draw.obj" ^
     "build\obj_gui\imgui_tables.obj" "build\obj_gui\imgui_widgets.obj" ^

@@ -15,17 +15,17 @@
 
 namespace gui {
 
-// 左侧七个功能页 + 两个辅助页
+// 左侧页面。七项功能各一页，其中「就诊路线」把平面图并在一起；
+// 再加一页数据总览。
 enum Page {
   PAGE_TRIAGE = 0,   // 1 智能导诊
   PAGE_DOCTOR,       // 2 医生查询
   PAGE_BOOK,         // 3 在线预约
   PAGE_MANAGE,       // 4 预约管理
   PAGE_SCHEDULE,     // 5 排班展示
-  PAGE_ROUTE,        // 6 就诊路线
+  PAGE_ROUTE,        // 6 就诊路线（含楼层平面图，题目要求「以图形化方式展示科室分布」）
   PAGE_QUEUE,        // 7 候诊队列
-  PAGE_FLOOR,        // 附加：楼层平面图（题目要求「以图形化方式展示科室分布」）
-  PAGE_ABOUT,        // 附加：数据总览
+  PAGE_ABOUT,        // 数据总览
   PAGE_COUNT
 };
 
@@ -91,24 +91,21 @@ struct GuiState {
   int scheduleDoctor = 0;  // 选中的医生
   int scheduleDept = 0;    // 汇总时选中的科室
 
-  // ------------------------------ 功能 6 就诊路线 ------------------------------
-  int routeFrom = 0;   // 起点房间下标
-  int routeTo = 0;     // 终点房间下标
+  // ------------------------------ 功能 6 就诊路线（含楼层平面图）-----------------------------
+  // 起终点只留一份：平面图上点房间改的就是这两个字段，路线查询用的也是它们。
+  int routeFrom = 0;  // 起点房间下标
+  int routeTo = 0;    // 终点房间下标
   RouteResult route;
   bool routeValid = false;
-  int routeHighlight[kMaxRouteSteps] = {};  // 要高亮的房间下标（副本，供平面图用）
-  int routeHighlightCount = 0;
+  // 平面图的显示选项
+  bool floorShowCode = true;     // 房间方块里显示房间号（否则显示科室名）
+  bool routeSideBySide = false;  // false = 地图占满宽度上下排，true = 左明细右地图
 
   // ------------------------------ 功能 7 候诊队列 ------------------------------
   int queuePatient = 0;  // 待签到的患者
   int queueDoctor = 0;   // 接诊医生
   int lastCalledPatient = -1;  // 最近一次叫号叫到的人，用于「就诊完成」的默认值
   int lastCalledDoctor = -1;
-
-  // ------------------------------ 楼层平面图 ------------------------------
-  int floorHighlightFrom = -1;
-  int floorHighlightTo = -1;
-  bool floorShowCode = true;
 };
 
 // GUI 状态的唯一实例（与 Hospital 用 db() 是同样的做法）
