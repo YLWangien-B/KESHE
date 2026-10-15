@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
   // 容量不够是最容易被忽略的一种失败 —— 数据看着在读，记录却在被悄悄丢掉。
   if (Loader::overflowCount() > 0) {
     std::printf("\n[警告] 有 %d 处数据超出了容量上限，部分记录没有被装入。\n", Loader::overflowCount());
-    std::printf("       按上面的提示调大 src/ds_list.h 或 src/ds.h 里对应的常量后重新编译。\n");
+    std::printf("       按上面的提示调大 src/model.h 或 src/ds.h 里对应的常量后重新编译。\n");
   } else if (Loader::errorCount() > 0) {
     std::printf("（有 %d 行数据未通过校验，已跳过）\n", Loader::errorCount());
   }
