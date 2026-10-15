@@ -6,7 +6,7 @@
  *
  *  分层（无环，见 ds_list.h 的说明）：
  *      ds_base.h  基础工具（散列表）
- *      ds_list.h  实体定义 + 六个顺序表
+ *      ds_list.h  实体定义 + 五个顺序表 + 排班二维数组
  *      ds.h       环形队列、二维数组、带权图、带权二部图
  *      model.h    本文件：数据总库
  *
@@ -59,6 +59,8 @@ class Hospital {
   WeightedGraph road;  // 就诊路网（邻接矩阵 + Floyd 预计算的最短路）
 
   // 索引：编号 -> 表内下标。四个散列表，让「按编号查」从 O(n) 变成平均 O(1)。
+  // （系统里还有第 5 个 HashMap：BipartiteGraph::symptomIndex_，
+  //   存的是「症状名 -> 症状顶点号」，键是中文。）
   HashMap deptIndex;
   HashMap doctorIndex;
   HashMap patientIndex;
