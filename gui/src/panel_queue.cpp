@@ -2,7 +2,7 @@
  *  panel_queue.cpp  —  功能 7：候诊队列
  *
  *  界面流程：患者签到 -> 医生叫号 -> （过号 / 就诊完成）。
- *  队列本身是 ds.h 里的环形队列 RingQueue<Waiting>，操作在 service_queue.h 的 Queue 类，
+ *  队列本身是 ds.h 里的环形队列 WaitingQueue，操作在 service_queue.h 的 Queue 类，
  *  这里一个算法都没重写，只是把 Queue 返回的 QueueResult 枚举翻译成一句给用户看的话。
  *
  *  为什么用枚举返回值而不是 bool：每一种失败都要给患者一句准确的话 ——

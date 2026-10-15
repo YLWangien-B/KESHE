@@ -126,18 +126,18 @@ void drawAbout() {
     ImGui::TableSetupColumn("余量", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableHeadersRow();
 
-    row("SeqList<Department,16>", "科室表", h.depts.size(), kMaxDept, sizeof(SeqList<Department, kMaxDept>));
-    row("SeqList<Doctor,64>", "医生表（每人含一张 7×4 排班表）", h.doctors.size(), kMaxDoctor,
-        sizeof(SeqList<Doctor, kMaxDoctor>));
-    row("SeqList<Patient,128>", "患者表", h.patients.size(), kMaxPatient,
-        sizeof(SeqList<Patient, kMaxPatient>));
-    row("SeqList<Booking,256>", "预约记录表", h.bookings.size(), kMaxBook,
-        sizeof(SeqList<Booking, kMaxBook>));
-    row("SeqList<Room,64>", "房间表", h.rooms.size(), kMaxRoom, sizeof(SeqList<Room, kMaxRoom>));
+    row("DepartmentList", "科室表", h.depts.size(), kMaxDept, sizeof(DepartmentList));
+    row("DoctorList", "医生表（每人含一张 7×4 排班表）", h.doctors.size(), kMaxDoctor,
+        sizeof(DoctorList));
+    row("PatientList", "患者表", h.patients.size(), kMaxPatient,
+        sizeof(PatientList));
+    row("BookingList", "预约记录表", h.bookings.size(), kMaxBook,
+        sizeof(BookingList));
+    row("RoomList", "房间表", h.rooms.size(), kMaxRoom, sizeof(RoomList));
     row("BipartiteGraph", "症状—科室带权二部图（导诊）", h.symptomGraph.symptomCount(),
         BipartiteGraph::kMaxSymptoms, sizeof(BipartiteGraph));
-    row("RingQueue<Waiting,64>", "候诊队列（环形队列）", h.waiting.size(), kMaxWaiting,
-        sizeof(RingQueue<Waiting, kMaxWaiting>));
+    row("WaitingQueue", "候诊队列（环形队列）", h.waiting.size(), kMaxWaiting,
+        sizeof(WaitingQueue));
     row("WeightedGraph", "就诊路网（邻接矩阵 + Floyd）", h.road.nodeCount(), WeightedGraph::kMaxNodes,
         sizeof(WeightedGraph));
     row("HashMap ×4", "四个编号→下标索引", h.depts.size() + h.doctors.size() + h.patients.size() +

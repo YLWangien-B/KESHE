@@ -40,3 +40,6 @@ desktop.ini
 gui/src/*.obj
 src/*.obj
 tools/*.obj
+
+# 回归测试的运行产物（in.txt 与 expected.txt 要纳入版本管理，actual.txt 不）
+_test/actual.txt

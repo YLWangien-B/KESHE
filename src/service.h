@@ -33,17 +33,10 @@
 //  复杂度：O(科室数 × 每科室症状数 + 科室数²)
 //          科室 12 个、每科室至多几个症状，实际是瞬间完成。
 // =============================================================================
-constexpr int kMaxTriageResult = 5;    // 最多返回几个推荐科室
-constexpr int kMaxPickedSymptom = 8;   // 一次最多选几个症状
-constexpr int kMaxMatchedPerDept = 8;  // 每个科室最多记几个命中的症状
-
-// 一个推荐科室
-struct TriageItem {
-  int dept;                         // 科室下标
-  int score;                        // 匹配得分（命中症状的权重之和）
-  int matchCount;                   // 命中的症状个数
-  int matched[kMaxMatchedPerDept];  // 命中的症状顶点号，用于说明推荐理由
-};
+constexpr int kMaxTriageResult = 5;   // 最多返回几个推荐科室
+constexpr int kMaxPickedSymptom = 8;  // 一次最多选几个症状
+// 注：kMaxMatchedPerDept 与 TriageItem 定义在 ds_sort.h —— 它们是「排序的对象」，
+// 和插入排序放在一起，那个文件才是自洽的一层（见 ds_sort.h 的说明）。
 
 struct TriageResult {
   int picked[kMaxPickedSymptom];  // 患者选中的症状顶点号，按选中先后排列
@@ -102,10 +95,10 @@ class Triage {
     item.matchCount = matchCount;
     for (int k = 0; k < kMaxMatchedPerDept; ++k) item.matched[k] = (k < matchCount) ? matched[k] : -1;
 
-    // 用通用的插入排序把推荐结果按得分从大到小排好。
+    // 用插入排序把推荐结果按得分从大到小排好。
     // 结果集最多 5 条，而且要求得分相同时保持先来后到，插入排序正合适。
-    // 排序算法本身在 ds_sort.h 里，与业务无关，可以单独自检。
-    insertSorted(result.items, result.count, kMaxTriageResult, item, GreaterScore());
+    // 排序算法本身在 ds_sort.h 里（不使用模板，只排 TriageItem），可以单独验证。
+    insertSorted(result.items, result.count, kMaxTriageResult, item);
   }
 };
 

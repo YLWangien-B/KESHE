@@ -104,16 +104,22 @@ class Loader {
   }
 
   // 按 '|' 切分一行，最多切出 maxFields 个字段；返回实际字段数。
-  // 字段缓冲的宽度 Width 由调用方给出：多数表用 64 就够，
-  // 科室表里那句描述比较长，用 160。
-  template <int Width>
-  static int split(char* line, char fields[][Width], int maxFields) {
+  //
+  // 字段缓冲区统一按 kFieldWidth 定宽（扁平的一维字符数组），
+  // 调用方按 fields[i] 取第 i 个字段。宽度 160 是按最长的那一列定的 ——
+  // 科室表里那句描述比较长；其它表用不到这么宽，浪费一点栈空间换一个函数。
+  //
+  // 原来这里是 `template <int Width> split(char*, char fields[][Width], int)`，
+  // 用模板参数表达字段宽度。课程要求不使用模板，改成固定宽度。
+  static constexpr int kFieldWidth = 160;
+
+  static int split(char* line, char fields[][kFieldWidth], int maxFields) {
     int n = 0;
     char* p = line;
     while (n < maxFields) {
       char* bar = std::strchr(p, '|');
       if (bar) *bar = '\0';
-      std::snprintf(fields[n], Width, "%s", p);
+      std::snprintf(fields[n], kFieldWidth, "%s", p);
       ++n;
       if (!bar) break;
       p = bar + 1;
@@ -181,7 +187,7 @@ class Loader {
     char line[1024];
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("depts.txt", "科室表", !h.depts.full())) break;
-      char fields[5][160];
+      char fields[5][kFieldWidth];
       if (split(line, fields, 5) < 5) {
         warn("depts.txt", "字段不足：", line);
         continue;
@@ -241,7 +247,7 @@ class Loader {
     char line[512];
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("doctors.txt", "医生表", !h.doctors.full())) break;
-      char fields[6][64];
+      char fields[6][kFieldWidth];
       if (split(line, fields, 6) < 6) {
         warn("doctors.txt", "字段不足：", line);
         continue;
@@ -277,7 +283,7 @@ class Loader {
     if (!openFile("schedules.txt")) return false;
     char line[256];
     while (nextLine(line, sizeof(line))) {
-      char fields[4][64];
+      char fields[4][kFieldWidth];
       if (split(line, fields, 4) < 4) {
         warn("schedules.txt", "字段不足：", line);
         continue;
@@ -286,8 +292,8 @@ class Loader {
       const int day = std::atoi(fields[1]);
       const int slot = std::atoi(fields[2]);
       const int quota = std::atoi(fields[3]);
-      if (doctor < 0 || !ScheduleTable<kMaxDay, kMaxSlot>::validDay(day) ||
-          !ScheduleTable<kMaxDay, kMaxSlot>::validSlot(slot)) {
+      if (doctor < 0 || !ScheduleTable::validDay(day) ||
+          !ScheduleTable::validSlot(slot)) {
         warn("schedules.txt", "医生或日期时段非法：", line);
         continue;
       }
@@ -317,7 +323,7 @@ class Loader {
     char line[256];
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("patients.txt", "患者表", !h.patients.full())) break;
-      char fields[3][64];
+      char fields[3][kFieldWidth];
       if (split(line, fields, 3) < 3) {
         warn("patients.txt", "字段不足：", line);
         continue;
@@ -350,7 +356,7 @@ class Loader {
     char line[1024];
     while (nextLine(line, sizeof(line))) {
       if (!ensureRoom("layout.txt", "房间表", !h.rooms.full())) break;
-      char fields[6][64];
+      char fields[6][kFieldWidth];
       if (split(line, fields, 6) < 6) {
         warn("layout.txt", "字段不足：", line);
         continue;
@@ -392,7 +398,7 @@ class Loader {
     // ---- 第二遍：把边挂上 ----
     if (!openFile("layout.txt")) return false;
     while (nextLine(line, sizeof(line))) {
-      char fields[6][64];
+      char fields[6][kFieldWidth];
       if (split(line, fields, 6) < 6) continue;
       const int u = std::atoi(fields[4]);
 
