@@ -49,7 +49,7 @@
  *      int  size() const           当前元素个数
  *      bool empty() const          是否为空
  *      bool full() const           是否已满
- *      int  capacity() const       容量上限
+ *      static constexpr int capacity()   容量上限（编译期常量，可静态调用）
  *      T&   operator[](int i)      按下标读写（不做越界检查，与数组一致）
  *      int  push(const T& v)       尾部追加，返回新元素下标；满了返回 -1
  *      bool removeAt(int i)        按下标删除，后续元素前移；下标非法返回 false
@@ -248,7 +248,7 @@ class DepartmentList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxDept; }
-  int capacity() const { return kMaxDept; }
+  static constexpr int capacity() { return kMaxDept; }
 
   Department& operator[](int i) { return data_[i]; }
   const Department& operator[](int i) const { return data_[i]; }
@@ -283,7 +283,7 @@ class DoctorList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxDoctor; }
-  int capacity() const { return kMaxDoctor; }
+  static constexpr int capacity() { return kMaxDoctor; }
 
   Doctor& operator[](int i) { return data_[i]; }
   const Doctor& operator[](int i) const { return data_[i]; }
@@ -316,7 +316,7 @@ class PatientList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxPatient; }
-  int capacity() const { return kMaxPatient; }
+  static constexpr int capacity() { return kMaxPatient; }
 
   Patient& operator[](int i) { return data_[i]; }
   const Patient& operator[](int i) const { return data_[i]; }
@@ -352,7 +352,7 @@ class BookingList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxBook; }
-  int capacity() const { return kMaxBook; }
+  static constexpr int capacity() { return kMaxBook; }
 
   Booking& operator[](int i) { return data_[i]; }
   const Booking& operator[](int i) const { return data_[i]; }
@@ -385,7 +385,7 @@ class RoomList {
   int size() const { return n_; }
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxRoom; }
-  int capacity() const { return kMaxRoom; }
+  static constexpr int capacity() { return kMaxRoom; }
 
   Room& operator[](int i) { return data_[i]; }
   const Room& operator[](int i) const { return data_[i]; }

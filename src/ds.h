@@ -54,7 +54,7 @@ class WaitingQueue {
   bool empty() const { return n_ == 0; }
   bool full() const { return n_ >= kMaxWaiting; }
   int size() const { return n_; }
-  int capacity() const { return kMaxWaiting; }
+  static constexpr int capacity() { return kMaxWaiting; }
 
   bool push(const Waiting& v) {
     if (n_ >= kMaxWaiting) return false;
