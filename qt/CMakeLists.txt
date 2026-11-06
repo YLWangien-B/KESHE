@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 #  HospitalQt —— 医院门诊预约与智能导诊系统（Qt 6 图形界面）
 #
 #  这一份代码编译出两个程序：
@@ -72,6 +72,8 @@ set(APP_SOURCES
     src/page_route.h
     src/page_queue.cpp
     src/page_queue.h
+    src/page_registry.cpp
+    src/page_registry.h
     src/page_about.cpp
     src/page_about.h
 )

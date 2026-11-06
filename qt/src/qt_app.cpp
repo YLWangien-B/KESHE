@@ -32,6 +32,7 @@
 #include "page_doctor.h"
 #include "page_manage.h"
 #include "page_queue.h"
+#include "page_registry.h"
 #include "page_route.h"
 #include "page_schedule.h"
 #include "page_triage.h"
@@ -101,6 +102,7 @@ void MainWindow::buildPages() {
   pages_[PAGE_SCHEDULE] = new SchedulePage(this);
   pages_[PAGE_ROUTE] = new RoutePage(this);
   pages_[PAGE_QUEUE] = new QueuePage(this);
+  pages_[PAGE_REGISTRY] = new RegistryPage(this);
   pages_[PAGE_ABOUT] = new AboutPage(this);
 
   // 只有本角色能用的页面才进页面栈；pageOrder_ 的顺序就是导航栏与页面栈的顺序。

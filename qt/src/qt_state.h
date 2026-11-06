@@ -35,6 +35,7 @@ enum Page {
   PAGE_SCHEDULE,    // 5 排班展示
   PAGE_ROUTE,       // 6 就诊路线（含楼层平面图）
   PAGE_QUEUE,       // 7 候诊队列
+  PAGE_REGISTRY,    // 人员管理（管理端专有：登记患者 / 医生）
   PAGE_ABOUT,       // 数据总览
   PAGE_COUNT
 };

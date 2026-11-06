@@ -358,6 +358,8 @@ const char* opName(int op) {
     case OP_RESUME: return "恢复出诊";
     case OP_REPAIR: return "一致性修复";
     case OP_RESCHEDULE: return "停诊自动改约";
+    case OP_ADD_PATIENT: return "登记患者";
+    case OP_ADD_DOCTOR: return "登记医生";
     default: return "其他";
   }
 }

@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  qt_role.cpp  —  角色判定与页面可见性
  * ========================================================================== */
 #include "qt_role.h"
@@ -26,6 +26,7 @@ bool pageEnabled(int page) {
       case PAGE_SCHEDULE:
       case PAGE_ROUTE:
       case PAGE_QUEUE:
+      case PAGE_REGISTRY:
       case PAGE_ABOUT:
         return true;
       default:

@@ -525,3 +525,146 @@ inline int repair(Hospital& h) {
 }
 
 }  // namespace Health
+
+// =============================================================================
+//  新增功能：登记患者 / 医生
+//
+//  原来数据只能从 data\*.txt 装载，运行期没法加人 —— 医院来了新患者、
+//  新医生入职，只能改文本文件再重启。这里补上运行期登记。
+//
+//  两条路都要走，缺一不可：
+//    ① 写进内存里的表（并把编号索引补上，否则 findPatient/findDoctor 查不到）
+//    ② 追加一行到 data\patients.txt / data\doctors.txt
+//       否则删掉 state.bin 重新装载时，新登记的人就没了。
+//
+//  整个过程在跨进程锁里完成：两端同时登记不能撞号。
+// =============================================================================
+namespace Registry {
+
+enum Result {
+  REG_OK = 0,
+  REG_DUP_CODE = -1,   // 编号已存在
+  REG_FULL = -2,       // 表已满
+  REG_EMPTY = -3,      // 必填项为空
+  REG_BAD_DEPT = -4,   // 科室不存在
+  REG_BAD_ROOM = -5,   // 房间不存在
+  REG_BAD_TITLE = -6,  // 职称不在允许范围内
+};
+
+// 把结果码翻译成一句能直接显示的话
+inline const char* resultText(int r) {
+  switch (r) {
+    case REG_OK: return "成功";
+    case REG_DUP_CODE: return "编号已存在";
+    case REG_FULL: return "记录数已达容量上限，请先在 model.h 里调大容量后重新编译";
+    case REG_EMPTY: return "编号、姓名等必填项不能为空";
+    case REG_BAD_DEPT: return "科室不存在";
+    case REG_BAD_ROOM: return "房间不存在";
+    case REG_BAD_TITLE: return "职称必须是：主任医师 / 副主任医师 / 主治医师 / 住院医师";
+    default: return "未知错误";
+  }
+}
+
+// 追加一行到数据文件。dataDir 形如 "data"。
+// 返回 true 表示写成功 —— 写失败只影响「下次重新装载」，
+// 当前运行期仍然可用，所以调用方给个提示即可，不必回滚。
+inline bool appendLineToFile(const char* dataDir, const char* fileName, const char* line) {
+  char path[512];
+  std::snprintf(path, sizeof(path), "%s/%s", dataDir, fileName);
+  std::FILE* f = std::fopen(path, "ab");  // 追加，二进制避免多写字
+  if (f == nullptr) return false;
+  std::fputs(line, f);
+  std::fputc('\n', f);
+  std::fclose(f);
+  return true;
+}
+
+// 登记患者。phone 允许为空（医院不强制留电话）。
+inline int addPatient(Hospital& h, const char* dataDir, const char* code, const char* name,
+                      const char* phone) {
+  if (code == nullptr || code[0] == '\0' || name == nullptr || name[0] == '\0')
+    return REG_EMPTY;
+  if (std::strlen(code) >= sizeof(Patient::code)) return REG_EMPTY;
+  if (std::strlen(name) >= sizeof(Patient::name)) return REG_EMPTY;
+
+  shared::Lock lock;
+
+  if (h.findPatient(code) >= 0) return REG_DUP_CODE;
+  if (h.patients.full()) return REG_FULL;
+
+  Patient p{};
+  std::snprintf(p.code, sizeof(p.code), "%s", code);
+  std::snprintf(p.name, sizeof(p.name), "%s", name);
+  std::snprintf(p.phone, sizeof(p.phone), "%s", phone != nullptr ? phone : "");
+
+  if (h.patients.push(p) < 0) return REG_FULL;
+  // 编号 -> 下标的索引必须一起维护，否则装完数据就查不到了
+  h.patientIndex.put(h.patients[h.patients.size() - 1].code, h.patients.size() - 1);
+
+  char line[128];
+  std::snprintf(line, sizeof(line), "%s|%s|%s", p.code, p.name, p.phone);
+  appendLineToFile(dataDir, "patients.txt", line);
+
+  shared::logOp(shared::OP_ADD_PATIENT, h.patients.size() - 1, -1, 0);
+  shared::bump();
+  return REG_OK;
+}
+
+// 登记医生。deptName 传科室名（界面里选的是名字，比编号好认）。
+// roomCode 传房间编号；传空表示暂不安排诊室。
+inline int addDoctor(Hospital& h, const char* dataDir, const char* code, const char* name,
+                     const char* deptName, const char* title, const char* skill,
+                     const char* roomCode) {
+  if (code == nullptr || code[0] == '\0' || name == nullptr || name[0] == '\0')
+    return REG_EMPTY;
+  if (std::strlen(code) >= sizeof(Doctor::code)) return REG_EMPTY;
+  if (std::strlen(name) >= sizeof(Doctor::name)) return REG_EMPTY;
+  if (skill != nullptr && std::strlen(skill) >= sizeof(Doctor::skill)) return REG_EMPTY;
+
+  shared::Lock lock;
+
+  if (h.findDoctor(code) >= 0) return REG_DUP_CODE;
+  if (h.doctors.full()) return REG_FULL;
+
+  const int dept = h.findDeptByName(deptName != nullptr ? deptName : "");
+  if (dept < 0) return REG_BAD_DEPT;
+
+  // 职称限定在这四种，界面上是下拉框，但业务层也要自己校验一遍
+  static const char* kTitles[] = {"主任医师", "副主任医师", "主治医师", "住院医师"};
+  bool titleOk = false;
+  for (int i = 0; i < 4; ++i)
+    if (title != nullptr && std::strcmp(title, kTitles[i]) == 0) titleOk = true;
+  if (!titleOk) return REG_BAD_TITLE;
+
+  int room = -1;
+  if (roomCode != nullptr && roomCode[0] != '\0') {
+    room = h.findRoom(roomCode);
+    if (room < 0) return REG_BAD_ROOM;
+  }
+
+  Doctor d{};
+  std::snprintf(d.code, sizeof(d.code), "%s", code);
+  std::snprintf(d.name, sizeof(d.name), "%s", name);
+  d.dept = dept;
+  std::snprintf(d.title, sizeof(d.title), "%s", title);
+  std::snprintf(d.skill, sizeof(d.skill), "%s", skill != nullptr ? skill : "");
+  d.room = room;
+  d.rankSum = 0;
+  d.rankCount = 0;
+  d.schedule.clear();  // 新医生默认不排班，由排班页/排班数据决定
+
+  if (h.doctors.push(d) < 0) return REG_FULL;
+  h.doctorIndex.put(h.doctors[h.doctors.size() - 1].code, h.doctors.size() - 1);
+
+  char line[256];
+  std::snprintf(line, sizeof(line), "%s|%s|%s|%s|%s|%s", d.code, d.name,
+                h.depts[dept].code, d.title, d.skill,
+                room >= 0 ? h.rooms[room].code : "");
+  appendLineToFile(dataDir, "doctors.txt", line);
+
+  shared::logOp(shared::OP_ADD_DOCTOR, -1, h.doctors.size() - 1, 0);
+  shared::bump();
+  return REG_OK;
+}
+
+}  // namespace Registry

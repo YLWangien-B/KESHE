@@ -73,7 +73,9 @@ enum OpKind {
   OP_RATE = 9,     // 患者评价
   OP_RESUME = 10,  // 恢复出诊
   OP_REPAIR = 11,  // 一致性修复
-  OP_RESCHEDULE = 12,  // 停诊后自动改约
+  OP_RESCHEDULE = 12,   // 停诊后自动改约
+  OP_ADD_PATIENT = 13,  // 登记新患者
+  OP_ADD_DOCTOR = 14,   // 登记新医生
 };
 
 // 一条审计记录。对应真实医院信息系统里「号源变动可追溯」的要求。
