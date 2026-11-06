@@ -1,4 +1,4 @@
-# 构建产物
+﻿# 构建产物
 build/
 
 # 编辑器与 IDE 的本地文件
@@ -43,3 +43,7 @@ tools/*.obj
 
 # 回归测试的运行产物（in.txt 与 expected.txt 要纳入版本管理，actual.txt 不）
 _test/actual.txt
+# Qt 图形界面（CMake + Ninja 的构建目录，以及 --shots 模式生成的截图）
+# 说明：build\ 已在上面整体忽略，这里只是把 Qt 特有的产物说明白
+build/qt/
+build/qt_shots/

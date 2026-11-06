@@ -1,0 +1,249 @@
+﻿/* =============================================================================
+ *  page_manage.cpp  —  预约管理页
+ * ========================================================================== */
+#include "page_manage.h"
+
+#include <QComboBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+#include "qt_common.h"
+
+namespace qt {
+
+ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
+  auto* layout = new QVBoxLayout(this);
+
+  layout->addWidget(makePageTitle(QStringLiteral("功能 4  预约管理")));
+  layout->addWidget(makeHint(QStringLiteral(
+      "预约记录存在顺序表里。取消时把该时段的号源退回，并递增槽的版本号 ——"
+      "这样此前看到的余号信息立刻作废，与预约时用的是同一套版本号机制。")));
+
+  // ---- 选患者 ----
+  auto* row = new QHBoxLayout();
+  row->addWidget(new QLabel(QStringLiteral("查看哪位患者的预约："), this));
+  patientCombo_ = new QComboBox(this);
+  patientCombo_->setMinimumWidth(220);
+  row->addWidget(patientCombo_);
+  row->addSpacing(12);
+  cancelBtn_ = new QPushButton(QStringLiteral("取消选中的预约"), this);
+  cancelBtn_->setEnabled(false);
+  row->addWidget(cancelBtn_);
+  row->addStretch(1);
+  summary_ = makeHint(QString());
+  row->addWidget(summary_);
+  layout->addLayout(row);
+
+  // ---- 记录表 ----
+  table_ = new QTableWidget(this);
+  setupReadOnlyTable(table_, 0, 7,
+                     {QStringLiteral("凭证号"), QStringLiteral("科室 / 医生"),
+                      QStringLiteral("就诊时间"), QStringLiteral("就诊地点"),
+                      QStringLiteral("状态"), QStringLiteral("该时段余号"),
+                      QStringLiteral("取消后余号")});
+  table_->setColumnWidth(0, 96);
+  table_->setColumnWidth(1, 220);
+  table_->setColumnWidth(2, 110);
+  table_->setColumnWidth(3, 260);
+  table_->setColumnWidth(4, 90);
+  table_->setColumnWidth(5, 110);
+  table_->setColumnWidth(6, 110);
+  layout->addWidget(table_, 1);
+
+  connect(patientCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          &ManagePage::onPatientChanged);
+  connect(cancelBtn_, &QPushButton::clicked, this, &ManagePage::onCancelClicked);
+  connect(table_, &QTableWidget::itemSelectionChanged, this,
+          &ManagePage::onTableSelectionChanged);
+}
+
+void ManagePage::refreshPage() {
+  Hospital& h = db();
+  QtState& st = state();
+
+  const int keep = patientCombo_->currentIndex();
+  QSignalBlocker block(patientCombo_);
+  patientCombo_->clear();
+  for (int i = 0; i < h.patients.size(); ++i)
+    patientCombo_->addItem(patientLabel(h, i));
+  int want = (keep >= 0 && keep < patientCombo_->count()) ? keep : st.patient;
+  if (want < 0 || want >= patientCombo_->count()) want = 0;
+  patientCombo_->setCurrentIndex(want);
+  st.patient = want;
+
+  fillTable();
+}
+
+void ManagePage::showPatient(int patient) {
+  if (patient >= 0 && patient < patientCombo_->count()) patientCombo_->setCurrentIndex(patient);
+}
+
+void ManagePage::onPatientChanged(int index) {
+  if (index < 0) return;
+  state().patient = index;
+  pendingPatient_ = -1;
+  pendingTicket_.clear();
+  fillTable();
+}
+
+void ManagePage::fillTable() {
+  Hospital& h = db();
+  const int patient = patientCombo_->currentIndex();
+
+  QVector<int> rows;  // 该患者的预约记录下标
+  for (int i = 0; i < h.bookings.size(); ++i)
+    if (h.bookings[i].patient == patient) rows.append(i);
+
+  table_->setRowCount(rows.size());
+  int booked = 0;
+  for (int r = 0; r < rows.size(); ++r) {
+    const Booking& b = h.bookings[rows[r]];
+    if (b.status == BOOKED) ++booked;
+
+    const QString status = (b.status == BOOKED)    ? QStringLiteral("已预约")
+                           : (b.status == CANCELLED) ? QStringLiteral("已取消")
+                                                     : QStringLiteral("已完成");
+    const int left = h.hasSchedule(b.doctor, b.day, b.slot) ? h.remaining(b.doctor, b.day, b.slot) : -1;
+
+    const QStringList cells = {
+        QString::fromUtf8(b.ticket),
+        deptName(h, h.doctors[b.doctor].dept) + QStringLiteral(" · ") +
+            QString::fromUtf8(h.doctors[b.doctor].name),
+        timeText(b.day, b.slot),
+        roomName(h, h.doctors[b.doctor].room),
+        status,
+        left >= 0 ? QString::number(left) : QStringLiteral("—"),
+        // 「取消后余号」= 当前余号 + 1，只对已预约的有意义
+        (b.status == BOOKED && left >= 0) ? QString::number(left + 1) : QStringLiteral("—"),
+    };
+    for (int c = 0; c < cells.size(); ++c) {
+      auto* item = new QTableWidgetItem(cells[c]);
+      item->setData(Qt::UserRole, rows[r]);  // 记住它在 h.bookings 里的下标
+      if (b.status == BOOKED && c == 4) item->setForeground(QColor(0x6E, 0xC8, 0x7E));
+      if (b.status != BOOKED) item->setForeground(QColor(0x9A, 0xA0, 0xA6));
+      table_->setItem(r, c, item);
+    }
+  }
+  table_->resizeRowsToContents();
+  table_->resizeColumnsToContents();
+  table_->horizontalHeader()->setStretchLastSection(true);
+
+  if (rows.isEmpty()) {
+    summary_->setText(QStringLiteral("%1 目前没有预约记录。")
+                          .arg(patientName(h, patient)));
+    // 全院的预约里还有别的患者，提示一下，免得用户以为预约丢了
+    int others = 0;
+    int firstOther = -1;
+    for (int i = 0; i < h.bookings.size(); ++i) {
+      if (h.bookings[i].patient == patient || h.bookings[i].status != BOOKED) continue;
+      ++others;
+      if (firstOther < 0) firstOther = h.bookings[i].patient;
+    }
+    if (others > 0)
+      summary_->setText(summary_->text() +
+                        QStringLiteral("（全院的预约里还有 %1 条「已预约」，例如 %2）")
+                            .arg(others)
+                            .arg(patientName(h, firstOther)));
+  } else {
+    summary_->setText(QStringLiteral("共 %1 条记录，其中「已预约」%2 条").arg(rows.size()).arg(booked));
+  }
+  cancelBtn_->setEnabled(false);
+  pendingPatient_ = -1;
+  pendingTicket_.clear();
+}
+
+void ManagePage::onTableSelectionChanged() {
+  const int row = table_->currentRow();
+  if (row < 0) {
+    cancelBtn_->setEnabled(false);
+    return;
+  }
+  QTableWidgetItem* item = table_->item(row, 0);
+  if (!item) return;
+  pendingTicket_ = item->text();
+  pendingPatient_ = patientCombo_->currentIndex();
+  // 只有「已预约」的才能取消
+  QTableWidgetItem* status = table_->item(row, 4);
+  cancelBtn_->setEnabled(status && status->text() == QStringLiteral("已预约"));
+}
+
+void ManagePage::onCancelClicked() {
+  if (pendingTicket_.isEmpty()) return;
+  Hospital& h = db();
+  QtState& st = state();
+  if (pendingPatient_ < 0) return;
+
+  // 找到这条记录，把关键信息摆出来让用户确认（避免点错）
+  const Booking* target = nullptr;
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient == pendingPatient_ && pendingTicket_ == QString::fromUtf8(b.ticket)) {
+      target = &b;
+      break;
+    }
+  }
+  if (!target) {
+    notifier().error(QStringLiteral("没有找到凭证号 %1").arg(pendingTicket_));
+    return;
+  }
+
+  const QString detail =
+      QStringLiteral("确定要取消预约 <b>%1</b> 吗？<br><br>"
+                     "患者：%2<br>医生：%3 %4（%5）<br>时间：%6<br>地点：%7<br><br>"
+                     "取消后该时段的号源会退回，其他人可以重新预约。")
+          .arg(pendingTicket_, patientLabel(h, target->patient),
+               QString::fromUtf8(h.doctors[target->doctor].code),
+               QString::fromUtf8(h.doctors[target->doctor].name),
+               QString::fromUtf8(h.doctors[target->doctor].title), timeText(target->day, target->slot),
+               roomName(h, h.doctors[target->doctor].room));
+
+  const auto ret = QMessageBox::question(this, QStringLiteral("确认取消预约"), detail,
+                                         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+  if (ret != QMessageBox::Yes) return;
+
+  if (cancelBooking(pendingPatient_, pendingTicket_)) {
+    // 界面层状态：这个患者就是当前选中的
+    st.patient = pendingPatient_;
+    fillTable();
+  }
+}
+
+// 取消一条预约：退回号源 + 递增版本号 + 改状态。
+// 定位用「患者 + 凭证号」这一对，不用当前选中患者 —— 见 ImGui 版同样处理的说明。
+bool ManagePage::cancelBooking(int patient, const QString& ticket) {
+  Hospital& h = db();
+  const QByteArray ticketUtf8 = ticket.toUtf8();
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    Booking& b = h.bookings[i];
+    if (b.patient != patient) continue;
+    if (std::strcmp(b.ticket, ticketUtf8.constData()) != 0) continue;
+
+    if (b.status != BOOKED) {
+      notifier().warn(QStringLiteral("预约 %1 不是「已预约」状态，无法取消").arg(ticket));
+      return false;
+    }
+    // 退回号源并递增版本号，让此前看到的余号信息立刻失效
+    if (h.hasSchedule(b.doctor, b.day, b.slot)) {
+      ScheduleSlot& s = h.slot(b.doctor, b.day, b.slot);
+      if (s.booked > 0) {
+        --s.booked;
+        s.version = ++h.versionClock;
+      }
+    }
+    b.status = CANCELLED;
+    notifier().ok(QStringLiteral("预约 %1 已取消，号源已退回（该时段剩余 %2 个）")
+                      .arg(ticket)
+                      .arg(h.remaining(b.doctor, b.day, b.slot)));
+    return true;
+  }
+  notifier().error(QStringLiteral("没有找到凭证号 %1（患者 %2 名下）")
+                       .arg(ticket, patientName(h, patient)));
+  return false;
+}
+
+}  // namespace qt
