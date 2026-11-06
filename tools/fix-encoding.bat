@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 rem ============================================================================
 rem  fix-encoding.bat - prepend a UTF-8 BOM to every source file under src\,
 rem                    tools\ and qt\src (run this after adding or editing a
