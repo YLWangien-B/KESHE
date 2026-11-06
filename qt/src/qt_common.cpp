@@ -114,7 +114,7 @@ QColor slotColor(SlotState s) {
   }
 }
 
-// 12 个科室 12 种颜色。与 ImGui 版完全一致，方便两版界面对照截图。
+// 12 个科室 12 种颜色。同一个科室在平面图、图例、结果表里始终是同一个颜色。
 QColor deptColor(int dept) {
   static const QColor kColors[] = {
       QColor(0x3E, 0x6B, 0xA8),  // 心血管内科  蓝

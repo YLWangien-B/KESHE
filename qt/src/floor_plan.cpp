@@ -28,7 +28,7 @@ constexpr qreal kLeftPad = 104.0;  // 左侧给「门诊楼1层」留的位置
 constexpr qreal kRowGap = 22.0;
 
 // 把文字塞进给定宽度：太宽就按比例缩小字号，保证不越出方框。
-// 这是 ImGui 版里踩过的问题（文字溢出方块），这里保留同样的保护。
+// 文字溢出方块是这类绘图最常见的毛病（方块画对了、字跑出框外），所以先量再缩。
 void addFittedText(QGraphicsScene* scene, QGraphicsItem* parent, const QString& text, qreal x,
                    qreal y, qreal maxW, qreal size, qreal minSize, const QColor& color) {
   auto* item = new QGraphicsSimpleTextItem(text, parent);

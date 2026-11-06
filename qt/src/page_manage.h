@@ -31,7 +31,7 @@ class ManagePage : public PageBase {
 
  private:
   void fillTable();
-  // 按「患者 + 凭证号」定位并取消，逻辑与 ImGui 版一致
+  // 按「患者 + 凭证号」定位并取消
   bool cancelBooking(int patient, const QString& ticket);
 
   QComboBox* patientCombo_ = nullptr;

@@ -2,25 +2,32 @@
 <!-- ============================================================================
       解决方案（.slnx 格式，Visual Studio 2022 17.14 及以后的版本支持）
 
-      三个可执行程序：
+      三个程序：
         Hospital     字符界面主程序（医院门诊预约与智能导诊系统）
-        HospitalGui  图形界面主程序（Dear ImGui + DirectX 11，七项功能 + 楼层平面图）
         GenData      测试数据生成器（生成 data\ 下的 6 个数据文件）
+        图形界面      Qt 版，见 qt\ —— 用 CMake 构建，不在这个解决方案里
 
-      三个项目各自有一个 main，所以必须分成三个项目，不能合并。
-      其中 Hospital 与 HospitalGui 共用 src\ 下的数据结构层、数据层与业务层，
-      区别只在界面层 —— 一个用 src\menu*.h + printf，一个用 gui\src\panel*.cpp + ImGui。
+      为什么图形界面不放进解决方案：
+        它用 Qt 6（Qt6Widgets），而 Qt 官方只提供 CMake 配置
+        （Qt6Config.cmake 里带着包含路径、编译选项、moc 规则和要链接的系统库）。
+        用 .vcxproj 手工复刻这些设置既冗长又容易出错，所以 Qt 版走
+        tools\build_qt.bat（内部调用 CMake + Ninja）。它照样能直接双击运行，
+        生成的 build\hospital_qt.exe 与另外两个程序放在一起。
+
+      三个程序共用 src\ 下的数据结构层、数据层与业务层：
+        · Hospital   界面层用 src\menu*.h + printf
+        · Qt 图形版  界面层用 qt\src\page_*.cpp
+        两个界面共用同一份业务层，改界面不改业务 —— 这就是分层的价值。
 
       使用顺序：
-        1) 生成数据     把 GenData     设为启动项目 → 运行（只需一次）
-        2) 看字符界面   把 Hospital    设为启动项目 → 运行
-        3) 看图形界面   把 HospitalGui 设为启动项目 → 运行
+        1) 生成数据     把 GenData  设为启动项目 → 运行（只需一次）
+        2) 字符界面     把 Hospital 设为启动项目 → 运行
+        3) 图形界面     运行 tools\run_qt.bat
 
       如果 Visual Studio 版本打不开这个文件，用同目录下的 Hospital.sln
       （经典格式，所有版本都能打开）。
      ============================================================================ -->
 <Solution>
   <Project Path="Hospital.vcxproj" />
-  <Project Path="HospitalGui.vcxproj" />
   <Project Path="GenData.vcxproj" />
 </Solution>

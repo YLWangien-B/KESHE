@@ -36,8 +36,7 @@ desktop.ini
 /*.png
 /*.jpg
 
-# 编译中间产物误落在源码目录时（build.bat 会挪进 build\obj_gui\）
-gui/src/*.obj
+# 编译中间产物误落在源码目录时（build.bat 与 CMake 都会把它们留在 build\ 下）
 src/*.obj
 tools/*.obj
 

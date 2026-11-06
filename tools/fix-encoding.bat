@@ -1,7 +1,8 @@
-@echo off
+﻿@echo off
 rem ============================================================================
-rem  fix-encoding.bat - prepend a UTF-8 BOM to every source file under src\ and
-rem                    tools\ (run this after adding or editing a source file)
+rem  fix-encoding.bat - prepend a UTF-8 BOM to every source file under src\,
+rem                    tools\ and qt\src (run this after adding or editing a
+rem                    source file)
 rem
 rem  Why: MSVC reads sources using the system code page (936/GBK on a Simplified
 rem  Chinese Windows). A BOM-less UTF-8 file containing Chinese comments is then
@@ -18,7 +19,7 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$bom=[byte[]](0xEF,0xBB,0xBF); $n=0;" ^
-  "foreach ($root in @('%ROOT%\src','%ROOT%\tools','%ROOT%\gui\src')) {" ^
+  "foreach ($root in @('%ROOT%\src','%ROOT%\tools','%ROOT%\qt\src')) {" ^
   "  if (-not (Test-Path $root)) { continue };" ^
   "  Get-ChildItem -Path $root -Recurse -Include *.h,*.cpp | ForEach-Object {" ^
   "    $b=[System.IO.File]::ReadAllBytes($_.FullName);" ^

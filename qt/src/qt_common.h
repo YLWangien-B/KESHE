@@ -1,15 +1,15 @@
 ﻿/* =============================================================================
  *  qt_common.h  —  Qt 界面层的公共约定
  *
- *  这一层是「界面层」的第三种实现（字符界面 / Dear ImGui / Qt）。
+ *  这一层是「界面层」的两种实现之一（另一种是 src\menu*.h 的字符界面）。
  *  它只做两件事：读 Hospital 里的数据（只读）、把数据翻译成界面能直接用的文字与颜色。
  *  数据结构层（ds.h / ds_sort.h）与业务层（service.h / service_queue.h）一行都没改。
  *
- *  与 ImGui 版的差别：
+ *  实现上的三个要点：
  *    · 返回 QString 而不是 const char*，省掉一次次 QString::fromUtf8 调用
- *    · 颜色用 QColor，不再依赖 ImGui 的 IM_COL32
- *    · 不再需要字体装载 —— Qt 自带完整的 Unicode 字体回退，
- *      中文零配置就能显示（ImGui 那边要自己找到系统字体并登记字形范围）
+ *    · 颜色用 QColor，与 Qt 控件的调色板一致
+ *    · 不需要字体装载 —— Qt 自带完整的 Unicode 字体回退，
+ *      中文零配置就能显示
  * ========================================================================== */
 #pragma once
 
@@ -61,7 +61,7 @@ SlotState slotState(Hospital& h, int doctor, int day, int slot);
 // 状态 -> 一句给患者看的话
 QString slotStateText(Hospital& h, int doctor, int day, int slot);
 
-// 状态 -> 颜色（与 ImGui 版同一套配色，便于两份界面对照）
+// 状态 -> 颜色（绿=充足 / 黄=紧张 / 红=已满 / 暗红=停诊 / 灰=不出诊）
 QColor slotColor(SlotState s);
 
 // 12 个科室各一种颜色，保证同科室同色（用在楼层平面图与图例上）

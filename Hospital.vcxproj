@@ -1,13 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!-- ============================================================================
       医院门诊预约与智能导诊系统 —— Visual Studio 项目文件
 
       说明：
         * 项目文件放在工程根目录，源文件在 src\ 下，所以路径是 src\xxx.cpp。
-        * 三个可执行程序各建一个项目：Hospital（字符界面主程序）、
-          HospitalGui（图形界面主程序）、GenData（测试数据生成器）。
-          它们各自有一个 main，不能放进同一个项目；
-          其中 Hospital 与 HospitalGui 共用 src\ 下的数据结构层、数据层与业务层。
+        * 三个可执行程序：Hospital（字符界面主程序）、GenData（测试数据生成器）、
+          图形界面（Qt 版，见 qt\）。前两个各建一个项目 —— 它们各自有一个 main，
+          不能放进同一个项目。图形界面用 CMake 构建（Qt 官方只提供 CMake 配置），
+          不在这个解决方案里，见 tools\build_qt.bat。
+          三个程序共用 src\ 下的数据结构层、数据层与业务层。
         * 输出目录统一到 工程根\build\，中间文件按 项目名_平台_配置 分开，
           这样命令行构建（tools\build.bat）与 VS 构建的结果在同一个地方，
           vcxproj 也不会与 tools\build.bat 等文件混在一个目录里。

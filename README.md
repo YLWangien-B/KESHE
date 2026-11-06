@@ -1,4 +1,4 @@
-# 医院门诊预约与智能导诊系统
+﻿# 医院门诊预约与智能导诊系统
 
 《数据结构》课程设计 第 1 题 · C++ 实现
 
@@ -72,26 +72,26 @@
 数组怎么放、长度怎么加、取模怎么绕、链地址法怎么挂、前向星怎么串、
 Floyd 怎么转 —— 全部是手写的。
 
-> **图形界面用的是第三方库（Dear ImGui）**，这不算破例：课程要求原文里
+> **图形界面用的是第三方库（Qt 6 Widgets）**，这不算破例：课程要求原文里
 > 明确写了「**用户界面除外**」，界面部分本来就允许用现成的库。
 > 而且它只被界面层用到，`ds.h`、`ds_sort.h` 里那六种数据结构和
 > `service.h`、`service_queue.h` 里的算法全部是自己写的，一行都没交给它。
-> 选型理由与用了哪些文件见 [third_party/README.md](third_party/README.md)。
+> 选型理由见 [qt/CMakeLists.txt](qt/CMakeLists.txt) 的文件头。
 
-## 二·补、两套界面，同一份数据与算法
+## 二·补、两个界面，同一份数据与算法
 
 题目要求「以图形化方式展示科室分布、医生排班和预约状态」，因此本工程有两个主程序：
 
 | 程序 | 界面 | 适用场合 |
 | --- | --- | --- |
 | `build\hospital.exe` | 字符界面（`src\menu*.h` + `printf`） | 讲数据结构与算法、跑自动化用例 |
-| `build\hospital_gui.exe` | 图形界面（`gui\src\panel*.cpp` + Dear ImGui + DirectX 11） | 演示科室分布平面图、号源日历、就诊路线 |
+| `build\hospital_qt.exe` | 图形界面（`qt\src\page*.cpp` + Qt 6 Widgets） | 演示科室分布平面图、号源日历、就诊路线 |
 
 两者**共用同一份数据结构层、数据层与业务层**，只有界面层是两套实现：
 
 ```
-        hospital.exe                    hospital_gui.exe
-   src/menu.h  src/menu_queue.h     gui/src/panel_*.cpp
+        hospital.exe                    hospital_qt.exe
+   src/menu.h  src/menu_queue.h     qt/src/page_*.cpp
              └──────────┬──────────────────────┘
                         │  都只调用下面这些，界面层互不相干
    ┌────────────────────▼────────────────────┐
@@ -109,23 +109,49 @@ Floyd 怎么转 —— 全部是手写的。
 **能做到这件事，是因为业务层从一开始就只返回 struct、不 printf** ——
 `Triage::run()` 返回 `TriageResult`、`Route::between()` 返回 `RouteResult`、
 `Queue::*` 返回 `QueueResult` 枚举。界面层想怎么画就怎么画，业务层一行都不用改。
-当初在字符界面下定的这条规矩，换成图形界面时直接省掉了一次重构。
+当初在字符界面下定的这条规矩，后来直接省掉了两次重构。
 
-「功能 6 就诊路线」页。路线明细和楼层平面图放在**同一页** —— 这两件事本来就该在一起：
-平面图上房间按路网节点号排开、同科室同色（图形化展示科室分布），查询出的路线直接描在图上；
-反过来点图上的房间就能设起点（Shift+点击设终点），与上面的下拉框双向联动：
+### Qt 版的界面结构
 
-![就诊路线（含楼层平面图）](docs/images/gui-route.png)
+采用 Qt 原生风格，不是自己画一个侧边栏：
 
-页面右上角有个「并排显示」开关：不勾是地图占满宽度、明细在下面；勾上则左明细右地图。
+```
+菜单栏    文件(F)  功能(N)  视图(V)  帮助(H)      ← 功能页有 Ctrl+1..8 快捷键
+工具栏    [重新装载数据] [刷新当前页(F5)]
+左停靠    功能导航（八个页面，可拖动 / 浮动 / 关闭）
+中心      QStackedWidget：八个页面
+下停靠    操作日志（带时间戳，保留 500 行历史）
+状态栏    左：数据规模摘要   右：当前页名 + 最新提示
+```
 
-「排班展示」页：格内是「余号/总数」，颜色越绿越好约，点任意格子直接带到预约页：
+八个页面与七项功能一一对应，另加一页数据总览：
 
-![排班展示](docs/images/gui-schedule.png)
+| 页面 | 要点 |
+| --- | --- |
+| 1 智能导诊 | 25 个症状复选框；结果表列出名次、科室、得分、命中症状、位置、该科室医生 |
+| 2 医生查询 | 按科室 / 职称 / 擅长领域三种方式；结果表带评分与出诊地点 |
+| 3 在线预约 | 号源格子（7 天 × 2 时段，按余量上色、可点击）；成功后弹出预约凭证 |
+| 4 预约管理 | 按患者列出预约；取消前把凭证号、医生、时间、地点摆出来二次确认 |
+| 5 排班展示 | 两种视角：**按医生**（一个人的一周日历）/ **按科室汇总**（全科医生对比）；点格子直接跳到预约页 |
+| 6 就诊路线 | 左边路线明细 + 换层指引，右边**楼层平面图**；两边双向联动 |
+| 7 候诊队列 | 签到、叫号、过号、就诊完成；队首已叫号时不允许越队 |
+| 数据总览 | 六种结构各装了多少 / 容量多少 / 占多少字节，全部 `sizeof` 实测 |
 
-「候诊队列」页：签到、叫号、过号、就诊完成四个动作，走的是同一个环形队列：
+**楼层平面图用 `QGraphicsView` / `QGraphicsScene` 实现**，不是自己画 `paintEvent`：
+每个房间是一个图元，因此自带缩放、拖动、命中测试；
+四层楼各一行、房间按路网节点号排开、同科室同色（图形化展示科室分布），
+查询出的路线直接描在图上，点房间就能设起点（Shift+点击设终点）。
 
-![候诊队列](docs/images/gui-queue.png)
+> 需要截图时运行 `build\hospital_qt.exe --shots`，
+> 它会把八个页面各渲染成一张 PNG 存到 `build\qt_shots\`。
+
+### 换界面这件事验证了两次
+
+第一次是从无到有加图形界面：`service.h`、`service_queue.h` 一行都没改。
+第二次是把这套图形界面整体换成另一个 GUI 框架（Qt）：这三层**同样一行都没改**，
+`git diff` 可以证明 `src/` 目录连一个字节都没动过。
+
+**这就是分层的价值：接入方式可以换，核心逻辑不用换。**
 
 ### 怎么验证
 
@@ -135,15 +161,20 @@ Floyd 怎么转 —— 全部是手写的。
 **测试用例与实测输出全部收在 [05-测试记录.md](docs/05-测试记录.md)** ——
 里面的日志都是从程序控制台原样复制的，可以直接作为课程设计报告【测试】一章的素材。
 
-值得一提的是一次「跑起来才发现的」缺陷，它们**编译期一个警告都没有**（`/W4` 全绿）：
+迁移到 Qt 的过程中踩到四个坑，都是**编译期或静态检查发现不了**的：
 
-| 缺陷 | 现象 | 根因与修法 |
+| 问题 | 现象 | 根因与修法 |
 | --- | --- | --- |
-| 按钮文字被裁 | 「生成预约凭证」显示成「生成预约凭」 | 按钮宽度按小字号写死（160px），而 150% DPI 下字体是 27px、需要 189px。改成用 `CalcTextSize` 量出文字宽度再加内边距 |
-| 列里的按钮被裁 | 「就诊完成，离开队列」显示成「就诊完成，离」 | 表格用 `SizingFixedFit` 按内容算列宽，把按钮卡在列内。改成两列等分 |
-| 长说明被裁 | 页面顶部的说明文字右边被切掉 | 用了 `TextDisabled`（不折行）。改成 `TextWrapped` |
+| Qt 的关键字污染 | `ds.h(214): error C2059: 语法错误: 「)」` —— 但同一份头文件在命令行版编得好好的 | Qt 把 `slots` / `signals` 定义成宏，而业务层有个方法就叫 `slots()`（排班表时段数），被展开成 `int ()`。按官方做法加 `QT_NO_KEYWORDS`，自己的代码改用 `Q_SLOTS` / `Q_SIGNALS` / `Q_EMIT`。**没有为了迁就界面库去改业务层的方法名** —— 那是分层的边界 |
+| 中文路径打不开文件 | 程序启动就弹「装载失败」 | 找数据目录时返回了绝对路径 `D:/课设/课设/data`，而装载用 `fopen()`，它走 Windows ANSI API（GBK），喂 UTF-8 字节的中文路径就找不到。改成继续传相对路径 `data`，落盘时用 `toLocal8Bit()` |
+| 平面图一片空白 | 图例、下拉框都正常，只有平面图区域全空 | `rebuild()` 在控件还没拿到实际尺寸时就调了 `fitInView`，缩放矩阵退化。补 `resizeEvent → fitScene()` |
+| 方块有、文字没有 | 平面图上的房间方块都画出来了，房间号与科室名一个都不显示 | 创建的 `QGraphicsSimpleTextItem` 忘了 `scene->addItem()`，图元根本没进场景 |
 
-这三处说明「能编译、能链接、不报警告」并不等于界面是对的 —— 必须真的跑起来看。
+另外还有一处逻辑 bug 是交互自检抓出来的：症状复选框在每次切页时都重建，
+旧的用 `deleteLater()` 却没转一圈事件循环，于是 `findChildren` 数出 25、50、75 这样
+的累积值 —— 表现为「明明勾了症状，导诊却说没选」。改成数量没变就不重建。
+
+**这些说明「能编译、能链接、不报警告」并不等于程序是对的 —— 必须真的跑起来看。**
 
 ## 三、数据结构与题目实现提示的对应
 
@@ -173,9 +204,9 @@ Floyd 怎么转 —— 全部是手写的。
 │   ├── menu_queue.h    功能 7 候诊队列的界面流程
 │   ├── main.cpp        程序入口与主菜单
 │   └── db.cpp          数据总库的唯一实例（两个主程序共用）
-├── Hospital.sln        Visual Studio 解决方案（三个项目）
+├── Hospital.sln        Visual Studio 解决方案（两个项目）
+├── Hospital.slnx       同一解决方案的新格式（VS 17.14+ 支持）
 ├── Hospital.vcxproj    字符界面主程序的项目文件
-├── HospitalGui.vcxproj 图形界面主程序的项目文件
 ├── GenData.vcxproj     测试数据生成器的项目文件
 ├── data/             测试数据（由 tools/gen_data 生成，程序只读）
 │   ├── symptoms.txt     25 个症状顶点
@@ -184,30 +215,30 @@ Floyd 怎么转 —— 全部是手写的。
 │   ├── schedules.txt    一周排班
 │   ├── patients.txt     12 名患者
 │   └── layout.txt       4 个楼层共 48 个房间以及它们之间的路线
-├── gui/             图形界面（界面层，只被 hospital_gui.exe 使用）
+├── qt/              图形界面（界面层，只被 hospital_qt.exe 使用）
+│   ├── CMakeLists.txt   构建配置（Qt6 Widgets；复用 src\db.cpp）
 │   └── src/
-│       ├── gui_main.cpp     入口、主框架、左侧导航、提示条
-│       ├── gui_app.cpp      窗口 + DirectX 11 + ImGui 的初始化与主循环
-│       ├── gui_font.cpp     中文字体装载（按需收集字形范围）
-│       ├── gui_common.h/.cpp 下标→名字的翻译、号源状态与配色
-│       ├── gui_state.h/.cpp GUI 自己的界面状态（选了谁、当前在哪一页）
-│       ├── panels.h         八个页面的入口声明
-│       ├── panel_triage.cpp   功能 1 智能导诊
-│       ├── panel_doctor.cpp   功能 2 医生查询
-│       ├── panel_booking.cpp  功能 3 在线预约
-│       ├── panel_manage.cpp   功能 4 预约管理
-│       ├── panel_schedule.cpp 功能 5 排班展示
-│       ├── panel_route.cpp    功能 6 就诊路线（含楼层平面图：走廊 + 48 个房间）
-│       ├── panel_queue.cpp    功能 7 候诊队列
-│       └── panel_about.cpp    数据总览（各结构装了多少、占多少字节）
-├── third_party/      第三方库（只有图形界面程序用到）
-│   ├── README.md       为什么选 Dear ImGui、用了哪些文件
-│   └── imgui/          Dear ImGui v1.92.9b（MIT 许可）
+│       ├── main.cpp         入口：找数据目录、装载、建主窗
+│       ├── qt_app.h/.cpp    主窗：菜单栏 / 工具栏 / 停靠窗口 / 页面栈 / 状态栏
+│       ├── qt_common.h/.cpp 下标→名字的翻译、号源状态、12 个科室配色
+│       ├── qt_state.h/.cpp  跨页共享的界面状态 + 通知中心
+│       ├── qt_widgets.h/.cpp 页面基类（切页刷新）、号源格子、排版工具
+│       ├── floor_plan.h/.cpp 楼层平面图（QGraphicsView）+ 科室配色图例
+│       ├── page_triage.cpp   功能 1 智能导诊
+│       ├── page_doctor.cpp   功能 2 医生查询
+│       ├── page_booking.cpp  功能 3 在线预约
+│       ├── page_manage.cpp   功能 4 预约管理
+│       ├── page_schedule.cpp 功能 5 排班展示
+│       ├── page_route.cpp    功能 6 就诊路线（含楼层平面图）
+│       ├── page_queue.cpp    功能 7 候诊队列
+│       └── page_about.cpp    数据总览（各结构装了多少、占多少字节）
 ├── tools/
 │   ├── gen_data.cpp     测试数据生成器
-│   ├── build.bat        构建（自动定位 MSVC）
+│   ├── build.bat        构建字符界面与测试数据生成器（自动定位 MSVC）
+│   ├── build_qt.bat     构建 Qt 图形界面（CMake + Ninja）
 │   ├── run.bat          一键构建并运行字符界面
-│   ├── run_gui.bat      一键构建并运行图形界面
+│   ├── run_qt.bat       一键构建并运行图形界面
+│   ├── check.bat        回归测试：跑一遍字符界面全流程并与期望输出逐字节比对
 │   └── fix-encoding.bat 给源码补 UTF-8 BOM（新增源文件后跑一次）
 ├── 数据结构原型说明.md   第一阶段交付：数据结构清单 + 每个类的逐个说明
 ├── 源码精读笔记-数据结构层.md  读懂源码用：逐个结构讲「为什么这么写」+ 易错点 + 答辩问答
@@ -221,46 +252,50 @@ Floyd 怎么转 —— 全部是手写的。
 
 ## 五、构建与运行
 
-需要 Visual Studio 2022 或更高版本（含「使用 C++ 的桌面开发」工作负载），Windows 系统。
+需要 Windows + **Visual Studio 2022**（含「使用 C++ 的桌面开发」工作负载）。
+图形界面另外需要 **Qt 6**（本项目用 Qt 6.8.3 MSVC 2022 64 位）；
+只跑字符界面的话不需要装 Qt。
 
-### 方式一：Visual Studio（推荐平时开发用）
+### 方式一：Visual Studio（字符界面与测试数据生成器）
 
-打开 **`Hospital.sln`**，解决方案里有三个项目：
+打开 **`Hospital.sln`**，解决方案里有两个项目：
 
 | 项目 | 产出 | 说明 |
 | --- | --- | --- |
 | **Hospital** | `build\hospital.exe` | 字符界面主程序：医院门诊预约与智能导诊系统 |
-| **HospitalGui** | `build\hospital_gui.exe` | 图形界面主程序（Dear ImGui + DirectX 11），七项功能 + 楼层平面图 |
 | **GenData** | `build\gen_data.exe` | 测试数据生成器：生成 `data\` 下的 6 个数据文件 |
 
-按顺序做三件事：
+按顺序做两件事：
 
 1. 右键 **GenData** → 设为启动项目 → `Ctrl+F5` 运行（**只需做一次**，生成测试数据）
 2. 右键 **Hospital** → 设为启动项目 → `Ctrl+F5` 运行（字符界面）
-3. 右键 **HospitalGui** → 设为启动项目 → `Ctrl+F5` 运行（图形界面）
 
-三个项目的输出都放在工程根的 `build\` 目录，调试时的工作目录也设成工程根，
+两个项目的输出都放在工程根的 `build\` 目录，调试时的工作目录也设成工程根，
 所以程序能按相对路径找到 `data\`，不需要手工拷贝数据文件。
 
-> **为什么是三个项目而不是一个**：三个程序各自有一个 `main()`，
+> **图形界面为什么不进这个解决方案**：它用 Qt 6，而 Qt 官方只提供 **CMake** 配置
+> （`Qt6Config.cmake` 里带着包含路径、编译定义、`moc` 规则和要链接的系统库）。
+> 用 `.vcxproj` 手工复刻这些设置既冗长又容易出错，所以 Qt 版走
+> `tools\build_qt.bat`（内部调用 CMake + Ninja）。用 Visual Studio 的话，
+> 可以直接「打开文件夹」打开 `qt\CMakeLists.txt`，VS 会按 CMake 工程处理。
+
+> **为什么两个程序要建两个项目**：它们各自有一个 `main()`，
 > C++ 里一个可执行程序只能有一个 `main`，放在同一个项目里会链接冲突。
-> 其中 **Hospital 与 HospitalGui 共用同一份数据结构层（`src/ds.h`）、数据层
-> （`src/model.h`、`src/load.h`）与业务层（`src/service.h`、`src/service_queue.h`）**，
-> 区别只在界面层 —— 一个用 `src/menu*.h` + `printf`，一个用 `gui/src/panel*.cpp` + ImGui。
-> 这正是当初「业务层只返回 struct、不 printf」这条分层约定换来的好处。
+> 但它们**共用同一份数据结构层（`src/ds.h`）、数据层（`src/model.h`、`src/load.h`）
+> 与业务层（`src/service.h`、`src/service_queue.h`）**，区别只在界面层 ——
+> 一个用 `src/menu*.h` + `printf`，一个用 `qt/src/page*.cpp` + Qt。
+> 这正是当初「业务层只返回 struct、不 printf」那条分层约定换来的好处。
 >
 > 项目属性里已经把该配的都配好了：包含目录 `src`、语言标准 C++17、
 > `/utf-8`（源码带 UTF-8 BOM，且窄字符串字面量必须按 UTF-8 输出）、
-> 警告等级 4、关闭 `fopen` 的「不安全」警告。
-> HospitalGui 另外加了 ImGui 的包含目录与 `d3d11.lib` / `d3dcompiler.lib` / `dxgi.lib`；
-> 第三方源码用 /W3（自己写的代码仍是 /W4），否则 ImGui 的跨平台代码会刷屏。
+> 警告等级 4（0 警告）、关闭 `fopen` 的「不安全」警告。
 > 这些与 `tools\build.bat` 里的开关保持一致，两条路径编译出的行为相同。
 
-### 方式二：命令行（一条命令搞定，缺什么自动补什么）
+### 方式二：命令行（推荐；一条命令搞定，缺什么自动补什么）
 
 ```bat
-tools\run.bat          rem 字符界面
-tools\run_gui.bat      rem 图形界面
+tools\run.bat          rem 字符界面（需要的话会先构建、再生成数据）
+tools\run_qt.bat       rem 图形界面（需要的话会先构建）
 ```
 
 也可以分步执行：
@@ -272,28 +307,36 @@ rem 1. 生成测试数据（只需一次；改过 gen_data.cpp 后重跑）
 tools\build.bat gen
 build\gen_data.exe data
 
-rem 2. 构建程序
-tools\build.bat            rem -> build\hospital.exe      字符界面
-tools\build.bat gui        rem -> build\hospital_gui.exe  图形界面（首次约 1~2 分钟，要编 ImGui）
+rem 2. 构建
+tools\build.bat            rem -> build\hospital.exe       字符界面
+tools\build.bat gen        rem -> build\gen_data.exe       测试数据生成器
+tools\build_qt.bat         rem -> build\hospital_qt.exe    Qt 图形界面（首次约 1 分钟）
 tools\build.bat clean      rem 清掉整个 build\ 目录
 
 rem 3. 运行
-build\hospital.exe          rem 字符界面
-build\hospital_gui.exe      rem 图形界面
+build\hospital.exe                 rem 字符界面
+build\hospital_qt.exe              rem 图形界面（需先把 Qt 的 bin 加进 PATH，
+                                    rem   用 tools\run_qt.bat 会自动处理）
 
 rem 也可以指定数据目录，便于用另一套数据做测试
 build\hospital.exe 数据目录名
-build\hospital_gui.exe 数据目录名
+build\hospital_qt.exe 数据目录名
+
+rem 4. 回归测试（一条命令跑完字符界面全流程并逐字节比对）
+tools\check.bat
 ```
 
-> **图形界面要点**：
-> * 它需要 **DirectX 11**（Windows 10/11 自带，不用装任何东西）。
->   如果机器没有可用的显卡驱动，程序会自动退回软件渲染（WARP），仍然能跑。
-> * 中文靠**装载系统里的中文字体**显示（按 微软雅黑 → 黑体 → 宋体 → 等线 的顺序找）。
->   一个字都缺不了：程序会把数据文件里读到的全部中文加上界面固定文案，
->   一起登记成字形范围再建贴图。找不到中文字体时会在控制台明确报出来，不静默变方块。
-> * 界面按 DPI 缩放自适应（125%/150% 缩放的笔记本上，窗口尺寸与字号都会跟着放）。
-> * 命令行日志仍然打印（子系统是 Console），插上参数就能排查装载问题。
+> **Qt 图形界面要点**：
+> * 需要 Qt 6.8.3（`msvc2022_64` 那一套）。路径写在 `tools\build_qt.bat`
+>   顶部的 `QTDIR` 里，换机器改这一行即可。
+> * **中文零配置**：Qt 自带完整的 Unicode 字体回退，会自动落到系统的中文字体上，
+>   不需要装载字体文件、也不需要登记字形范围。
+> * **高 DPI 自动处理**：Qt 6 默认就按 DPI 缩放，窗口与控件尺寸都会跟着系统缩放走。
+> * 界面用 Fusion 风格，不受系统主题影响，截图在不同机器上一致。
+> * 命令行日志仍然打印（子系统是 Console），装载阶段的校验信息可以直接在控制台看；
+>   同时也会写进界面底部的「操作日志」。
+> * 分发到**没装 Qt 的机器**时，用 Qt 自带的 `windeployqt.exe build\hospital_qt.exe`
+>   把需要的 DLL 拷到 exe 旁边即可。
 
 > **改过源码后，请先跑一次 `tools\fix-encoding.bat`。**
 > MSVC 默认按系统代码页（简体中文是 936/GBK）读源文件。UTF-8 的中文注释被按 GBK
@@ -314,10 +357,13 @@ build\hospital_gui.exe 数据目录名
 * 七个结构各自的断言数与覆盖内容；
 * 四个功能用例（导诊打分、就诊路线、排班、候诊队列）的预期值与实测值对照；
 * 18 条边界与出错用例（超范围输入、号源已满、重复签到、越队叫号、坏数据行……）；
-* 图形界面的测试过程，以及它抓出来的三个界面缺陷。
+* 图形界面的迁移过程，以及适配 Qt 时踩到的问题。
 
-为了让交付代码更紧凑，产生那些日志的两套自检程序已经移出工程；
-测试记录里的日志是它们在工程内时的实际运行输出，可据此复现。
+为了让交付代码更紧凑，产生那些日志的数据结构自检程序已经移出工程；
+测试记录里的日志是它在工程内时的实际运行输出，可据此复现。
+
+图形界面另外留了一个 `--shots` 参数用于出图与核对布局：
+`build\hospital_qt.exe --shots` 会把八个页面各渲染成一张 PNG 存到 `build\qt_shots\`。
 
 
 ```
@@ -411,32 +457,35 @@ D1 王秀英（主任医师）的候诊队列，共 2 人：
 | `src/main.cpp` | 116 | 入口与主菜单 |
 | | **1026** | |
 
-### 界面层之二：图形界面
+### 界面层之二：图形界面（Qt 6）
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
-| `gui/src/gui_main.cpp` | 307 | 入口、主框架、左侧导航、提示条 |
-| `gui/src/gui_app.cpp` + `.h` | 337 | 窗口 + DirectX 11 + ImGui 初始化与主循环 |
-| `gui/src/gui_font.cpp` + `.h` | 179 | 中文字体装载（按需收集字形范围） |
-| `gui/src/gui_common.h` | 100 | 下标→名字的翻译、号源状态与配色 |
-| `gui/src/gui_state.h` + `.cpp` | 137 | GUI 自己的界面状态 |
-| `gui/src/panels.h` + `panel_common.cpp` | 139 | 页面入口声明、号源格子与图例 |
-| `gui/src/panel_*.cpp` × 9 | 2209 | 七项功能（含楼层平面图）+ 数据总览 |
-| | **3333** | 只被 `hospital_gui.exe` 使用 |
+| `qt/src/main.cpp` | 175 | 入口：找数据目录、装载、建主窗 |
+| `qt/src/qt_app.cpp` + `.h` | 381 | 主窗：菜单栏 / 工具栏 / 停靠窗口 / 页面栈 / 状态栏 |
+| `qt/src/qt_common.cpp` + `.h` | 226 | 下标→名字的翻译、号源状态、12 科室配色 |
+| `qt/src/qt_state.cpp` + `.h` | 119 | 跨页共享的界面状态 + 通知中心 |
+| `qt/src/qt_widgets.cpp` + `.h` | 323 | 页面基类（切页刷新）、号源格子、排版工具 |
+| `qt/src/floor_plan.cpp` + `.h` | 338 | 楼层平面图（QGraphicsView）+ 科室图例 |
+| `qt/src/page_*.cpp` × 8 | 2377 | 七项功能（含楼层平面图）+ 数据总览 |
+| | **3939** | 只被 `hospital_qt.exe` 使用 |
 
-### 辅助程序与第三方
+### 辅助程序
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
 | `tools/gen_data.cpp` | 277 | 测试数据生成器（不属于交付程序） |
-| `third_party/imgui/` | 约 59000 | Dear ImGui v1.92.9b（**第三方，不算自己的代码量**） |
 
-**自己写的代码合计 6154 行** = 共用层 1518 + 字符界面 1026 + 图形界面 3333 + 数据生成器 277。
+**自己写的代码合计 7760 行** = 共用层 1518 + 字符界面 1026 + 图形界面 3939 + 数据生成器 277。
 其中课程考核重点 —— 数据结构层与业务层 —— 是**共用层那 1518 行**，
 两个界面都只是它的调用者。
 
-> 为控制交付规模，早先用来验证数据结构与图形界面的两套自检程序已移出工程。
-> 它们的实际运行输出保存在 [05-测试记录.md](docs/05-测试记录.md) 里，可直接引用。
+> **第三方代码**：Qt 6 是装在系统里的库，不在本工程目录里，也没有拷贝进仓库，
+> 所以不计入代码量。界面层用到它的方式与「用 Windows 的窗口 API」是一个性质 ——
+> 课程要求原文本身也写了「用户界面除外」。
+>
+> 为控制交付规模，早先用来验证数据结构的数据结构自检程序已移出工程。
+> 它的实际运行输出保存在 [05-测试记录.md](docs/05-测试记录.md) 里，可直接引用。
 
 ## 八、版本管理
 

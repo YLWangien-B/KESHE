@@ -214,7 +214,8 @@ void ManagePage::onCancelClicked() {
 }
 
 // 取消一条预约：退回号源 + 递增版本号 + 改状态。
-// 定位用「患者 + 凭证号」这一对，不用当前选中患者 —— 见 ImGui 版同样处理的说明。
+// 定位用「患者 + 凭证号」这一对，不用当前选中患者：
+// 否则用户中途换了患者，取消的就不是他当初点的那一条了。
 bool ManagePage::cancelBooking(int patient, const QString& ticket) {
   Hospital& h = db();
   const QByteArray ticketUtf8 = ticket.toUtf8();

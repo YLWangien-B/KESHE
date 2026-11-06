@@ -37,7 +37,7 @@ AboutPage::AboutPage(QWidget* parent) : PageBase(parent) {
   layout->addWidget(makePageTitle(QStringLiteral("数据总览")));
   layout->addWidget(makeHint(QStringLiteral(
       "下面所有数字都是程序运行期从当前实例读出来的：容量取自各结构的 capacity()，"
-      "占用字节取自 sizeof。数据结构层与业务层与字符界面、ImGui 界面完全相同，"
+      "占用字节取自 sizeof。数据结构层与业务层与字符界面完全相同，"
       "换界面不改业务。")));
 
   summary_ = new QLabel(this);
