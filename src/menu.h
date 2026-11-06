@@ -280,6 +280,7 @@ inline void doBook() {
       b.day = day;
       b.slot = slot;
       b.status = BOOKED;
+      b.rated = 0;  // 还没评价过
       h.bookings.push(b);
 
       // 共享模式下记一笔审计日志（单进程模式是空操作）

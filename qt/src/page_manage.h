@@ -5,6 +5,8 @@
 
 #include "qt_widgets.h"
 
+class QInputDialog;
+
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -28,6 +30,7 @@ class ManagePage : public PageBase {
   void onPatientChanged(int index);
   void onCancelClicked();
   void onTableSelectionChanged();
+  void onRateClicked();  // 扩展要求第 3 条：对已完成的就诊评价医生
 
  private:
   void fillTable();
@@ -37,6 +40,7 @@ class ManagePage : public PageBase {
   QComboBox* patientCombo_ = nullptr;
   QTableWidget* table_ = nullptr;
   QPushButton* cancelBtn_ = nullptr;
+  QPushButton* rateBtn_ = nullptr;  // 评价选中的预约
   QLabel* summary_ = nullptr;
   // 待取消的记录：点「取消预约」的瞬间记下，之后用户切换患者也不影响
   int pendingPatient_ = -1;

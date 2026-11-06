@@ -13,7 +13,10 @@
 #include <QVBoxLayout>
 
 #include "qt_common.h"
+#include <QInputDialog>
+
 #include "shared_db.h"
+#include "service_extra.h"
 
 namespace qt {
 
@@ -35,6 +38,12 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   cancelBtn_ = new QPushButton(QStringLiteral("取消选中的预约"), this);
   cancelBtn_->setEnabled(false);
   row->addWidget(cancelBtn_);
+
+  // 扩展要求第 3 条：就诊完成后可以评价医生
+  rateBtn_ = new QPushButton(QStringLiteral("评价选中的就诊"), this);
+  rateBtn_->setEnabled(false);
+  rateBtn_->setToolTip(QStringLiteral("只有状态为「已完成」且还没评价过的记录才能评价"));
+  row->addWidget(rateBtn_);
   row->addStretch(1);
   summary_ = makeHint(QString());
   row->addWidget(summary_);
@@ -46,7 +55,7 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
                      {QStringLiteral("凭证号"), QStringLiteral("科室 / 医生"),
                       QStringLiteral("就诊时间"), QStringLiteral("就诊地点"),
                       QStringLiteral("状态"), QStringLiteral("该时段余号"),
-                      QStringLiteral("取消后余号")});
+                      QStringLiteral("评价")});
   table_->setColumnWidth(0, 96);
   table_->setColumnWidth(1, 220);
   table_->setColumnWidth(2, 110);
@@ -61,6 +70,7 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   connect(cancelBtn_, &QPushButton::clicked, this, &ManagePage::onCancelClicked);
   connect(table_, &QTableWidget::itemSelectionChanged, this,
           &ManagePage::onTableSelectionChanged);
+  connect(rateBtn_, &QPushButton::clicked, this, &ManagePage::onRateClicked);
 }
 
 void ManagePage::refreshPage() {
@@ -106,9 +116,14 @@ void ManagePage::fillTable() {
     const Booking& b = h.bookings[rows[r]];
     if (b.status == BOOKED) ++booked;
 
-    const QString status = (b.status == BOOKED)    ? QStringLiteral("已预约")
-                           : (b.status == CANCELLED) ? QStringLiteral("已取消")
-                                                     : QStringLiteral("已完成");
+    QString status;
+    switch (b.status) {
+      case BOOKED: status = QStringLiteral("已预约"); break;
+      case FINISHED: status = QStringLiteral("已完成"); break;
+      case CANCELLED: status = QStringLiteral("已取消"); break;
+      case STOPPED_CANCEL: status = QStringLiteral("因停诊取消"); break;
+      default: status = QStringLiteral("未知"); break;
+    }
     const int left = h.hasSchedule(b.doctor, b.day, b.slot) ? h.remaining(b.doctor, b.day, b.slot) : -1;
 
     const QStringList cells = {
@@ -119,8 +134,10 @@ void ManagePage::fillTable() {
         roomName(h, h.doctors[b.doctor].room),
         status,
         left >= 0 ? QString::number(left) : QStringLiteral("—"),
-        // 「取消后余号」= 当前余号 + 1，只对已预约的有意义
-        (b.status == BOOKED && left >= 0) ? QString::number(left + 1) : QStringLiteral("—"),
+        // 评价列：已完成才显示评分，没评过显示「待评价」
+        (b.status == FINISHED)
+            ? (b.rated != 0 ? QStringLiteral("已评价") : QStringLiteral("待评价"))
+            : QStringLiteral("—"),
     };
     for (int c = 0; c < cells.size(); ++c) {
       auto* item = new QTableWidgetItem(cells[c]);
@@ -171,6 +188,10 @@ void ManagePage::onTableSelectionChanged() {
   // 只有「已预约」的才能取消
   QTableWidgetItem* status = table_->item(row, 4);
   cancelBtn_->setEnabled(status && status->text() == QStringLiteral("已预约"));
+  // 只有「已完成」且还没评过的才能评价
+  QTableWidgetItem* rateItem = table_->item(row, 6);
+  rateBtn_->setEnabled(status && status->text() == QStringLiteral("已完成") && rateItem &&
+                       rateItem->text() == QStringLiteral("待评价"));
 }
 
 void ManagePage::onCancelClicked() {
@@ -268,6 +289,45 @@ bool ManagePage::cancelBooking(int patient, const QString& ticket) {
                            .arg(ticket, patientName(h, patient)));
       return false;
   }
+}
+
+// 扩展要求第 3 条：对已完成的就诊评价医生。
+// 评分写进 Doctor 的 rankSum / rankCount，导诊与预约页会读到它。
+void ManagePage::onRateClicked() {
+  Hospital& h = db();
+  const int row = table_->currentRow();
+  if (row < 0) return;
+
+  QTableWidgetItem* ticketItem = table_->item(row, 0);
+  QTableWidgetItem* idxItem = table_->item(row, 0);
+  if (!ticketItem || !idxItem) return;
+
+  // 第 0 列里用 UserRole 记了预约在 h.bookings 里的下标
+  const int bookingIndex = idxItem->data(Qt::UserRole).toInt();
+  if (bookingIndex < 0 || bookingIndex >= h.bookings.size()) return;
+  const Booking& bk = h.bookings[bookingIndex];
+  const QString doctorText = QString::fromUtf8(h.doctors[bk.doctor].name) +
+                             QStringLiteral("（") +
+                             QString::fromUtf8(h.doctors[bk.doctor].title) + QStringLiteral("）");
+
+  bool ok = false;
+  const int stars = QInputDialog::getInt(
+      this, QStringLiteral("评价医生"),
+      QStringLiteral("给 %1 的就诊打几分？\n\n（1 分很不满意，5 分非常满意）").arg(doctorText), 5,
+      Rating::kMinStars, Rating::kMaxStars, 1, &ok);
+  if (!ok) return;
+
+  if (!Rating::submit(h, bookingIndex, stars)) {
+    notifier().warn(QStringLiteral("评价失败：该记录不是「已完成」状态，或已经评价过了"));
+    return;
+  }
+  char buf[64];
+  Rating::text(h.doctors[bk.doctor], buf, sizeof(buf));
+  notifier().ok(QStringLiteral("已评价 %1：%2 分。该医生当前评分 %3")
+                    .arg(doctorText)
+                    .arg(stars)
+                    .arg(QString::fromUtf8(buf)));
+  fillTable();
 }
 
 }  // namespace qt

@@ -23,6 +23,7 @@
 #include "qt_app.h"
 #include "qt_common.h"
 #include "shared_db.h"
+#include "service_extra.h"
 
 namespace qt {
 
@@ -241,6 +242,7 @@ void BookingPage::onBook() {
       b.day = st.day;
       b.slot = st.slot;
       b.status = BOOKED;
+      b.rated = 0;  // 还没评价过
       if (h.bookings.push(b) < 0) {
         // 记满之后回滚号源，否则这个号就永远被吃掉了
         --s.booked;
@@ -317,6 +319,13 @@ void BookingPage::updateSlotInfo() {
                           QString::fromUtf8(h.doctors[doctor].name), deptName(h, h.doctors[doctor].dept),
                           QString::fromUtf8(h.doctors[doctor].title));
   info += QStringLiteral("出诊房间：%1<br>").arg(roomName(h, h.doctors[doctor].room));
+
+  // 扩展要求第 3 条：推荐科室时参考评分 —— 这里把这位医生的评分直接摆出来，
+  // 患者在「症状匹配」之外还能看到「大家对这个医生评价如何」。
+  char rankText[64];
+  Rating::text(h.doctors[doctor], rankText, sizeof(rankText));
+  info += QStringLiteral("患者评分：<b>%1</b><br>").arg(QString::fromUtf8(rankText));
+
   info += QStringLiteral("选中时段：<b>%1</b><br>").arg(timeText(st.day, st.slot));
   if (ss == SLOT_NONE || ss == SLOT_STOPPED) {
     info += QStringLiteral("<span style='color:#b04a4a;'>%1</span>").arg(stateText);
@@ -328,6 +337,29 @@ void BookingPage::updateSlotInfo() {
                 .arg(stateText);
     bookBtn_->setEnabled(ss != SLOT_FULL);
     if (ss == SLOT_FULL) info += QStringLiteral("<br><span style='color:#b04a4a;'>号已满，无法预约</span>");
+  }
+
+  // ---- 扩展要求第 4 条：科室号源紧张时推荐相近科室 ----
+  // 只在这个科室该时段没号（已满 / 全部停诊）时提示，否则没必要打扰患者。
+  const int dept = h.doctors[doctor].dept;
+  if (Referral::tightness(h, dept, st.day, st.slot) == 2) {
+    int rec[4];
+    const int nrec = Referral::recommend(h, dept, st.day, st.slot, rec, 4);
+    info += QStringLiteral("<hr><span style='color:#d8b050;'><b>%1 的号源已满</b></span><br>")
+                .arg(deptName(h, dept));
+    if (nrec == 0) {
+      info += QStringLiteral("该时段没有其它科室还有号，建议换一个时段。");
+    } else {
+      info += QStringLiteral("相近科室（按症状重叠度）：<br>");
+      for (int i = 0; i < nrec; ++i) {
+        const int freeCount = Referral::freeSlots(h, rec[i], st.day, st.slot);
+        info += QStringLiteral("· %1（相似度 %2%%，余号 %3）<br>")
+                    .arg(deptName(h, rec[i]))
+                    .arg(Referral::similarity(h, dept, rec[i]))
+                    .arg(freeCount);
+      }
+      info += QStringLiteral("<span style='color:#8a9199;'>换到相近科室：在「科室」下拉框里改选即可</span>");
+    }
   }
   slotInfo_->setText(info);
 }

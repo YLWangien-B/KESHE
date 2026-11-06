@@ -12,7 +12,12 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include <QMessageBox>
+#include <QPushButton>
+
 #include "qt_app.h"
+#include "qt_role.h"
+#include "service_extra.h"
 #include "qt_common.h"
 
 namespace qt {
@@ -45,6 +50,27 @@ SchedulePage::SchedulePage(QWidget* parent) : PageBase(parent) {
   hintLabel_ = makeHint(QString());
   filterRow->addWidget(hintLabel_);
   layout->addLayout(filterRow);
+
+  // ---- 管理端才有的一行：停诊 / 恢复出诊（扩展要求第 2 条）----
+  auto* adminRow = new QHBoxLayout();
+  selLabel_ = makeHint(QStringLiteral("未选中格子。点一下号源格子选中它，再点「设为停诊」。"));
+  adminRow->addWidget(selLabel_, 1);
+  stopBtn_ = new QPushButton(QStringLiteral("设为停诊"), this);
+  stopBtn_->setEnabled(false);
+  stopBtn_->setToolTip(QStringLiteral("把选中的时段停掉，并通知该时段已预约的患者改约"));
+  adminRow->addWidget(stopBtn_);
+  resumeBtn_ = new QPushButton(QStringLiteral("恢复出诊"), this);
+  resumeBtn_->setEnabled(false);
+  adminRow->addWidget(resumeBtn_);
+  layout->addLayout(adminRow);
+  // 患者端没有这两个按钮
+  const bool adminVisible = isAdmin();
+  stopBtn_->setVisible(adminVisible);
+  resumeBtn_->setVisible(adminVisible);
+  selLabel_->setVisible(adminVisible);
+
+  connect(stopBtn_, &QPushButton::clicked, this, &SchedulePage::onStopClicked);
+  connect(resumeBtn_, &QPushButton::clicked, this, &SchedulePage::onResumeClicked);
 
   // ---- 两张表放在 QStackedWidget 里，按视角切换 ----
   views_ = new QStackedWidget(this);
@@ -235,7 +261,10 @@ void SchedulePage::fillByDept() {
   if (oldRow >= 0 && oldRow < docs.size()) deptTable_->selectRow(oldRow);
 }
 
-// 点格子 -> 记住医生/日期/时段 -> 跳到预约页
+// 点格子：按角色分流。
+//   患者端 —— 记下医生/日期/时段，跳到预约页去约（原来的行为）
+//   管理端 —— 只把这一格选起来，供「设为停诊 / 恢复出诊」使用。
+//             管理端不该被带到预约页（预约是患者的事）。
 void SchedulePage::onCellActivated(int row, int col) {
   QtState& st = state();
   Hospital& h = db();
@@ -246,12 +275,6 @@ void SchedulePage::onCellActivated(int row, int col) {
     doctor = doctorCombo_->currentIndex();
     slot = row;
     day = col;
-    if (slotState(h, doctor, day, slot) == SLOT_NONE ||
-        slotState(h, doctor, day, slot) == SLOT_STOPPED) {
-      notifier().warn(QStringLiteral("%1 %2 不出诊，无法预约")
-                          .arg(dayText(day), slotText(slot)));
-      return;
-    }
   } else {
     // 按科室视图：格子上记了医生/日/时段
     QTableWidgetItem* item = deptTable_->item(row, col);
@@ -259,11 +282,34 @@ void SchedulePage::onCellActivated(int row, int col) {
     doctor = item->data(Qt::UserRole).toInt();
     day = item->data(Qt::UserRole + 1).toInt();
     slot = item->data(Qt::UserRole + 2).toInt();
-    if (slotState(h, doctor, day, slot) == SLOT_NONE ||
-        slotState(h, doctor, day, slot) == SLOT_STOPPED) {
-      notifier().warn(QStringLiteral("该时段不出诊"));
-      return;
-    }
+  }
+  if (doctor < 0 || day < 0 || slot < 0) return;
+
+  const SlotState ss = slotState(h, doctor, day, slot);
+
+  // ---- 管理端：记住选中，启停诊/恢复按钮 ----
+  if (isAdmin()) {
+    selDoctor_ = doctor;
+    selDay_ = day;
+    selSlot_ = slot;
+    const bool assigned = (ss != SLOT_NONE);
+    stopBtn_->setEnabled(assigned && ss != SLOT_STOPPED);
+    resumeBtn_->setEnabled(assigned && ss == SLOT_STOPPED);
+    selLabel_->setText(QStringLiteral("已选中：%1 · %2%3%4")
+                           .arg(doctorName(h, doctor), dayText(day), slotText(slot),
+                                ss == SLOT_STOPPED ? QStringLiteral("（当前已停诊）")
+                                                   : QString()));
+    return;
+  }
+
+  // ---- 患者端：不出诊/停诊的格子点了没意义，直接提示 ----
+  if (ss == SLOT_NONE) {
+    notifier().warn(QStringLiteral("%1 %2 不出诊，无法预约").arg(dayText(day), slotText(slot)));
+    return;
+  }
+  if (ss == SLOT_STOPPED) {
+    notifier().warn(QStringLiteral("%1 %2 已停诊").arg(dayText(day), slotText(slot)));
+    return;
   }
 
   // 记下跳转意图，预约页 refreshPage 时会用它预填
@@ -274,6 +320,57 @@ void SchedulePage::onCellActivated(int row, int col) {
   notifier().info(QStringLiteral("已选择 %1 %2 %3，跳到预约页")
                       .arg(doctorName(h, doctor), dayText(day), slotText(slot)));
   if (auto* w = qobject_cast<MainWindow*>(window())) w->switchPage(PAGE_BOOK);
+}
+
+// =============================================================================
+//  扩展要求第 2 条：医生临时停诊时通知已预约患者
+// =============================================================================
+void SchedulePage::onStopClicked() {
+  Hospital& h = db();
+  if (selDoctor_ < 0) return;
+
+  const QString when = dayText(selDay_) + slotText(selSlot_);
+  const int booked = h.slot(selDoctor_, selDay_, selSlot_).booked;
+
+  // 把影响说清楚再让操作者确认 —— 停诊会取消别人的预约，不该一点就生效
+  const QString detail =
+      QStringLiteral("确定把 <b>%1</b> %2 设为停诊吗？<br><br>"
+                     "该时段当前有 <b>%3</b> 条已预约记录，"
+                     "停诊后它们会被标记为「因停诊取消」并通知患者改约。<br><br>"
+                     "（号源不会自动恢复给这些患者 —— 停诊期间号已经被别人约走了，"
+                     "只能让他们重新预约。）")
+          .arg(doctorName(h, selDoctor_), when)
+          .arg(booked);
+
+  if (QMessageBox::question(this, QStringLiteral("设为停诊"), detail,
+                            QMessageBox::Yes | QMessageBox::No, QMessageBox::No) !=
+      QMessageBox::Yes)
+    return;
+
+  const int affected = StopClinic::apply(h, selDoctor_, selDay_, selSlot_);
+  if (affected < 0) {
+    notifier().error(QStringLiteral("该时段没有排班，无法停诊"));
+    return;
+  }
+  notifier().ok(QStringLiteral("已停诊：%1 %2%3，已通知 %4 位已预约患者改约")
+                    .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_))
+                    .arg(affected));
+
+  // 刷新界面
+  onModeChanged(modeCombo_->currentIndex());
+}
+
+void SchedulePage::onResumeClicked() {
+  Hospital& h = db();
+  if (selDoctor_ < 0) return;
+
+  if (StopClinic::resume(h, selDoctor_, selDay_, selSlot_)) {
+    notifier().ok(QStringLiteral("已恢复出诊：%1 %2%3")
+                      .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_)));
+    onModeChanged(modeCombo_->currentIndex());
+  } else {
+    notifier().warn(QStringLiteral("该时段本来就不是停诊状态"));
+  }
 }
 
 }  // namespace qt

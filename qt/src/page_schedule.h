@@ -5,6 +5,8 @@
 
 #include "qt_widgets.h"
 
+class QPushButton;
+
 class QComboBox;
 class QLabel;
 class QStackedWidget;
@@ -28,6 +30,8 @@ class SchedulePage : public PageBase {
   void onDoctorChanged(int index);
   void onDeptChanged(int index);
   void onCellActivated(int row, int col);
+  void onStopClicked();   // 扩展要求第 2 条：设为停诊并通知已预约患者
+  void onResumeClicked(); // 恢复出诊
 
  private:
   void rebuildDoctorCombos();
@@ -42,6 +46,13 @@ class SchedulePage : public PageBase {
   QTableWidget* doctorTable_ = nullptr;  // 按医生
   QTableWidget* deptTable_ = nullptr;    // 按科室汇总
   QLabel* hintLabel_ = nullptr;
+  QPushButton* stopBtn_ = nullptr;
+  QPushButton* resumeBtn_ = nullptr;
+  QLabel* selLabel_ = nullptr;   // 当前选中的「医生 + 日期 + 时段」
+  // 选中的格子（管理端点格子不再跳预约页，而是记住它供停诊用）
+  int selDoctor_ = -1;
+  int selDay_ = -1;
+  int selSlot_ = -1;
 };
 
 }  // namespace qt

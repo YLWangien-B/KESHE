@@ -82,6 +82,17 @@ class Queue {
     const int i = indexOf(h, patient, doctor);
     if (i < 0) return QUEUE_NOT_FOUND;
     h.waiting.removeAt(i);
+
+    // 就诊完成时把对应的预约标成「已完成」—— 这是扩展要求第 3 条的前提：
+    // 只有真的看完病，患者才有资格评价医生（否则可以随便刷分）。
+    for (int k = 0; k < h.bookings.size(); ++k) {
+      Booking& b = h.bookings[k];
+      if (b.patient == patient && b.doctor == doctor && b.status == BOOKED) {
+        b.status = FINISHED;
+        break;
+      }
+    }
+
     shared::logOp(shared::OP_FINISH, patient, doctor, 0);
     shared::bump();
     return QUEUE_OK;
