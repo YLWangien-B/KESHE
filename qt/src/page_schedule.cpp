@@ -78,17 +78,23 @@ SchedulePage::SchedulePage(QWidget* parent) : PageBase(parent) {
   doctorTable_ = new QTableWidget(this);
   doctorTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   doctorTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-  doctorTable_->horizontalHeader()->setStretchLastSection(true);
+  doctorTable_->horizontalHeader()->setStretchLastSection(false);
+  // 按医生视图正好 7 天，等分列宽最整齐
+  doctorTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
   doctorTable_->verticalHeader()->setVisible(true);
   views_->addWidget(doctorTable_);
 
   deptTable_ = new QTableWidget(this);
   deptTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   deptTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-  deptTable_->horizontalHeader()->setStretchLastSection(true);
+  deptTable_->horizontalHeader()->setStretchLastSection(false);
+  // 按科室汇总是 15 列，按内容自适应
+  deptTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
   views_->addWidget(deptTable_);
 
-  layout->addWidget(views_, 1);
+  // 不拉伸：按医生视图只有 2 行，撑满整个高度会留下大片空白
+  layout->addWidget(views_);
+  layout->addStretch(1);
 
   connect(modeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &SchedulePage::onModeChanged);
@@ -172,7 +178,10 @@ void SchedulePage::fillByDoctor() {
   doctorTable_->verticalHeader()->setVisible(true);
   doctorTable_->horizontalHeader()->setStretchLastSection(true);
 
-  hintLabel_->setText(QStringLiteral("提示：点任意格子 → 直接到预约页"));
+  // 文案要跟角色一致：管理端点格子只是选中，并不会跳到预约页
+  hintLabel_->setText(isAdmin()
+                          ? QStringLiteral("点格子选中后，用下方按钮停诊 / 恢复出诊")
+                          : QStringLiteral("提示：点任意格子 → 直接到预约页"));
 
   for (int s = 0; s < 2; ++s) {
     for (int d = 0; d < kMaxDay; ++d) {
@@ -220,12 +229,13 @@ void SchedulePage::fillByDept() {
   deptTable_->setColumnCount(headers.size());
   deptTable_->setHorizontalHeaderLabels(headers);
   deptTable_->setVerticalHeaderLabels(QStringList());  // 医生名放第一列
-  deptTable_->horizontalHeader()->setStretchLastSection(true);
 
   hintLabel_->setText(
-      QStringLiteral("%1 共 %2 名医生。格内是余号数，\"—\" 表示不出诊。点格子 → 预约页")
+      QStringLiteral("%1 共 %2 名医生。格内是余号数，\"—\" 表示不出诊。%3")
           .arg(deptName(h, dept))
-          .arg(docs.size()));
+          .arg(docs.size())
+          .arg(isAdmin() ? QStringLiteral("点格子选中后可用下方按钮停诊")
+                         : QStringLiteral("点格子 → 预约页")));
 
   for (int r = 0; r < docs.size(); ++r) {
     const int doc = docs[r];

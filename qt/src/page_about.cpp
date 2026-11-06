@@ -57,13 +57,15 @@ AboutPage::AboutPage(QWidget* parent) : PageBase(parent) {
   structTable_ = new QTableWidget(box1);
   setupReadOnlyTable(structTable_, 9, 4,
                      {QStringLiteral("类型"), QStringLiteral("用途"),
-                      QStringLiteral("已装 / 容量"), QStringLiteral("sizeof（字节）")});
-  structTable_->setColumnWidth(0, 150);
+                      QStringLiteral("已装 / 容量"), QStringLiteral("sizeof（字节）")},
+                     false);
+  // 190 才放得下 SeqList&lt;Department,16&gt; 这种最长的类型名（原来 150 会被截断）
+  structTable_->setColumnWidth(0, 190);
   structTable_->setColumnWidth(1, 260);
   structTable_->setColumnWidth(2, 120);
   structTable_->setColumnWidth(3, 130);
   v1->addWidget(structTable_);
-  layout->addWidget(box1, 1);
+  layout->addWidget(box1, 2);
 
   // ---- 实体记录 ----
   auto* box2 = new QGroupBox(QStringLiteral("实体记录（全部是定长记录，只存数据不存指针）"), this);
@@ -71,12 +73,13 @@ AboutPage::AboutPage(QWidget* parent) : PageBase(parent) {
   entityTable_ = new QTableWidget(box2);
   setupReadOnlyTable(entityTable_, 7, 3,
                      {QStringLiteral("实体"), QStringLiteral("含义"),
-                      QStringLiteral("sizeof（字节）")});
+                      QStringLiteral("sizeof（字节）")},
+                     false);
   entityTable_->setColumnWidth(0, 130);
   entityTable_->setColumnWidth(1, 300);
   entityTable_->setColumnWidth(2, 130);
   v2->addWidget(entityTable_);
-  layout->addWidget(box2, 1);
+  layout->addWidget(box2, 2);
 
   // ---------------- 健壮性：一致性自检（自选功能）----------------
   auto* box3 = new QGroupBox(QStringLiteral("数据一致性自检"), this);
@@ -110,7 +113,7 @@ AboutPage::AboutPage(QWidget* parent) : PageBase(parent) {
   opsTable_->setColumnWidth(3, 160);
   opsTable_->setColumnWidth(4, 160);
   v4->addWidget(opsTable_);
-  layout->addWidget(box4, 1);
+  layout->addWidget(box4, 2);
 
   connect(recheck, &QPushButton::clicked, this, &AboutPage::onRecheck);
   connect(repair, &QPushButton::clicked, this, &AboutPage::onRepair);

@@ -66,13 +66,15 @@ TriagePage::TriagePage(QWidget* parent) : PageBase(parent) {
   setupReadOnlyTable(resultTable_, 0, 6,
                      {QStringLiteral("名次"), QStringLiteral("科室"), QStringLiteral("得分"),
                       QStringLiteral("命中症状"), QStringLiteral("位置"),
-                      QStringLiteral("该科室医生")});
-  resultTable_->setColumnWidth(0, 56);
-  resultTable_->setColumnWidth(1, 130);
-  resultTable_->setColumnWidth(2, 70);
-  resultTable_->setColumnWidth(3, 240);
-  resultTable_->setColumnWidth(4, 150);
-  resultTable_->setColumnWidth(5, 240);
+                      QStringLiteral("该科室医生")},
+                     false);  // 最后一列不拉伸：6 列固定宽度加起来会超出可用宽度
+  // 前五列按内容给固定宽度；最后一列吃掉剩余空间并允许换行显示多位医生
+  resultTable_->setColumnWidth(0, 52);
+  resultTable_->setColumnWidth(1, 120);
+  resultTable_->setColumnWidth(2, 56);
+  resultTable_->setColumnWidth(3, 190);
+  resultTable_->setColumnWidth(4, 130);
+  resultTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
   rightLayout->addWidget(resultTable_, 1);
 
   detailLabel_ = makeHint(QStringLiteral(

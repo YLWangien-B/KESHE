@@ -45,9 +45,12 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   rateBtn_->setToolTip(QStringLiteral("只有状态为「已完成」且还没评价过的记录才能评价"));
   row->addWidget(rateBtn_);
   row->addStretch(1);
-  summary_ = makeHint(QString());
-  row->addWidget(summary_);
   layout->addLayout(row);
+
+  // 摘要单独一行放在表格上方 —— 原来它和按钮挤在同一行，
+  // 窗口不够宽时会被压成「…记录」+「录。」两行，很难看。
+  summary_ = makeHint(QString());
+  layout->addWidget(summary_);
 
   // ---- 记录表 ----
   table_ = new QTableWidget(this);
@@ -55,14 +58,15 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
                      {QStringLiteral("凭证号"), QStringLiteral("科室 / 医生"),
                       QStringLiteral("就诊时间"), QStringLiteral("就诊地点"),
                       QStringLiteral("状态"), QStringLiteral("该时段余号"),
-                      QStringLiteral("评价")});
-  table_->setColumnWidth(0, 96);
-  table_->setColumnWidth(1, 220);
-  table_->setColumnWidth(2, 110);
-  table_->setColumnWidth(3, 260);
-  table_->setColumnWidth(4, 90);
-  table_->setColumnWidth(5, 110);
-  table_->setColumnWidth(6, 110);
+                      QStringLiteral("评价")},
+                     false);  // 不拉伸最后一列，否则「评价」会独占大半张表
+  table_->setColumnWidth(0, 92);
+  table_->setColumnWidth(1, 200);
+  table_->setColumnWidth(2, 92);
+  table_->setColumnWidth(3, 230);
+  table_->setColumnWidth(4, 110);
+  table_->setColumnWidth(5, 100);
+  table_->setColumnWidth(6, 92);
   layout->addWidget(table_, 1);
 
   connect(patientCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -149,8 +153,8 @@ void ManagePage::fillTable() {
     }
   }
   table_->resizeRowsToContents();
-  table_->resizeColumnsToContents();
-  table_->horizontalHeader()->setStretchLastSection(true);
+  // 不再 resizeColumnsToContents：它会把上面显式设好的列宽改回「按内容」，
+  // 没数据时所有列都缩到表头宽度，比例反而更乱。
 
   if (rows.isEmpty()) {
     summary_->setText(QStringLiteral("%1 目前没有预约记录。")

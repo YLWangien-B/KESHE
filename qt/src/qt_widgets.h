@@ -95,8 +95,12 @@ class SlotGrid : public QWidget {
 QLabel* makePageTitle(const QString& text);
 QLabel* makeHint(const QString& text);
 
-// 只读表格的标准配置（整行选中、不显示行号、按内容自适应列宽）
-void setupReadOnlyTable(QTableWidget* table, int rows, int cols, const QStringList& headers);
+// 只读表格的标准配置（整行选中、不显示行号）
+//
+// stretchLast = true 时最后一列吃掉剩余宽度。列数多、或者最后一列内容短的时候
+// 不要开 —— 否则前面几列被挤成一团，最后一列却空出几百像素（预约管理就踩过）。
+void setupReadOnlyTable(QTableWidget* table, int rows, int cols, const QStringList& headers,
+                        bool stretchLast = true);
 
 // 给表格某一行设置「本行是当前选中/待确认」的高亮底色
 void markRow(QTableWidget* table, int row, bool marked);

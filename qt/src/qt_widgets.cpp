@@ -194,7 +194,8 @@ QLabel* makeHint(const QString& text) {
   return label;
 }
 
-void setupReadOnlyTable(QTableWidget* table, int rows, int cols, const QStringList& headers) {
+void setupReadOnlyTable(QTableWidget* table, int rows, int cols, const QStringList& headers,
+                        bool stretchLast) {
   table->setRowCount(rows);
   table->setColumnCount(cols);
   if (!headers.isEmpty()) table->setHorizontalHeaderLabels(headers);
@@ -203,7 +204,9 @@ void setupReadOnlyTable(QTableWidget* table, int rows, int cols, const QStringLi
   table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->setAlternatingRowColors(true);
   table->verticalHeader()->setVisible(false);  // 不显示行号
-  table->horizontalHeader()->setStretchLastSection(true);
+  table->horizontalHeader()->setStretchLastSection(stretchLast);
+  // 允许拖动列宽调整（默认是 Interactive，这里显式写出来便于理解）
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
   table->setWordWrap(false);
 }
 
