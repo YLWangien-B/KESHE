@@ -25,6 +25,9 @@ namespace {
 constexpr wchar_t kMapName[] = L"Local\\HospitalSharedState";
 constexpr wchar_t kMutexName[] = L"Local\\HospitalSharedMutex";
 
+// 本进程自己的心跳槽下标（-1 = 没加入）
+int g_myPeer = -1;
+
 HANDLE g_file = INVALID_HANDLE_VALUE;
 HANDLE g_map = nullptr;
 HANDLE g_mutex = nullptr;
@@ -229,11 +232,153 @@ void logOp(int op, int patient, int doctor, int result) {
 }
 
 // =============================================================================
+//  心跳
+// =============================================================================
+void join(uint32_t role) {
+  if (!g_block) return;
+  shared::Lock lock;
+  const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+  // 先看有没有自己（同一进程重复 join）或者在超时后留下的旧槽
+  for (int i = 0; i < kMaxPeers; ++i) {
+    PeerSlot& p = g_block->peers[i];
+    if (p.pid == 0) {  // 空位
+      p.pid = static_cast<uint32_t>(GetCurrentProcessId());
+      p.role = role;
+      p.lastSeen = now;
+      g_myPeer = i;
+      return;
+    }
+    if (p.pid == static_cast<uint32_t>(GetCurrentProcessId())) {  // 自己
+      p.role = role;
+      p.lastSeen = now;
+      g_myPeer = i;
+      return;
+    }
+    // 僵尸槽：心跳早已超时，直接顶掉
+    if (now > p.lastSeen + kPeerTimeoutSec) {
+      p.pid = static_cast<uint32_t>(GetCurrentProcessId());
+      p.role = role;
+      p.lastSeen = now;
+      g_myPeer = i;
+      return;
+    }
+  }
+}
+
+void beat() {
+  if (!g_block || g_myPeer < 0) return;
+  shared::Lock lock;
+  g_block->peers[g_myPeer].lastSeen = static_cast<uint32_t>(std::time(nullptr));
+}
+
+void leave() {
+  if (!g_block || g_myPeer < 0) return;
+  shared::Lock lock;
+  g_block->peers[g_myPeer].pid = 0;
+  g_block->peers[g_myPeer].role = ROLE_NONE;
+  g_block->peers[g_myPeer].lastSeen = 0;
+  g_myPeer = -1;
+}
+
+const char* roleText(uint32_t role) {
+  switch (role) {
+    case ROLE_PATIENT: return "患者端";
+    case ROLE_ADMIN: return "管理端";
+    case ROLE_CONSOLE: return "字符界面";
+    default: return "未知";
+  }
+}
+
+int alivePeers() {
+  if (!g_block) return 0;
+  const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+  int n = 0;
+  for (int i = 0; i < kMaxPeers; ++i) {
+    const PeerSlot& p = g_block->peers[i];
+    if (p.pid == 0) continue;
+    if (i == g_myPeer) continue;                 // 不数自己
+    if (now <= p.lastSeen + kPeerTimeoutSec) ++n;
+  }
+  return n;
+}
+
+bool peerInfo(int index, uint32_t* pid, uint32_t* role) {
+  if (!g_block) return false;
+  const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+  int seen = 0;
+  for (int i = 0; i < kMaxPeers; ++i) {
+    const PeerSlot& p = g_block->peers[i];
+    if (p.pid == 0 || i == g_myPeer) continue;
+    if (now > p.lastSeen + kPeerTimeoutSec) continue;
+    if (seen == index) {
+      if (pid) *pid = p.pid;
+      if (role) *role = p.role;
+      return true;
+    }
+    ++seen;
+  }
+  return false;
+}
+
+bool hasStalePeer() {
+  if (!g_block) return false;
+  const uint32_t now = static_cast<uint32_t>(std::time(nullptr));
+  for (int i = 0; i < kMaxPeers; ++i) {
+    const PeerSlot& p = g_block->peers[i];
+    if (p.pid == 0 || i == g_myPeer) continue;
+    if (now > p.lastSeen + kPeerTimeoutSec) return true;  // 槽还占着但不刷新了
+  }
+  return false;
+}
+
+const OpEntry* opEntries() { return g_block ? g_block->ops : nullptr; }
+
+int opFillCount() {
+  if (!g_block) return 0;
+  // nextSeq 在 logOp 里从 1 开始自增；写满一轮后停在 kOpLogSize
+  const uint32_t next = g_block->header.generation;  // 仅用于占位，真正条数见下
+  (void)next;
+  int n = 0;
+  for (int i = 0; i < kOpLogSize; ++i)
+    if (g_block->ops[i].seq != 0) ++n;
+  return n;
+}
+
+const char* opName(int op) {
+  switch (op) {
+    case OP_BOOK: return "预约";
+    case OP_CANCEL: return "取消预约";
+    case OP_CHECKIN: return "签到排队";
+    case OP_CALL: return "叫号";
+    case OP_PASS: return "过号";
+    case OP_FINISH: return "就诊完成";
+    case OP_STOP: return "停诊";
+    case OP_STOP_CANCEL: return "停诊取消预约";
+    case OP_RATE: return "评价";
+    case OP_RESUME: return "恢复出诊";
+    case OP_REPAIR: return "一致性修复";
+    default: return "其他";
+  }
+}
+
+// =============================================================================
 //  跨进程互斥
 // =============================================================================
 Lock::Lock() {
   if (!g_mutex) return;  // 单进程模式：不需要锁
-  const DWORD r = WaitForSingleObject(g_mutex, INFINITE);
+
+  // 先等 2 秒；超时只是**提醒**，随后继续无限等。
+  //
+  // 为什么不直接放弃等：放弃就等于在没有互斥的情况下改数据，那比卡住更糟
+  // （会真的写坏数据）。这里要解决的是另一个问题 —— 一端被调试器停住或
+  // 被系统挂起时，另一端会静悄悄卡死，用户看到的是"程序没反应"。
+  // 打一行提示，至少能知道是在等锁，而不是崩了。
+  DWORD r = WaitForSingleObject(g_mutex, 2000);
+  if (r == WAIT_TIMEOUT) {
+    std::printf("[共享] 正在等待另一进程释放数据锁……（对端可能被挂起或卡住）\n");
+    std::fflush(stdout);
+    r = WaitForSingleObject(g_mutex, INFINITE);
+  }
   // WAIT_ABANDONED 表示上一个持有者崩溃了、系统替它释放了锁。
   // 锁是拿到了，但数据可能停在不一致的状态 —— 当作「拿到锁」处理，
   // 让程序继续（界面刷新一次就能看到当前真实状态）。

@@ -19,10 +19,19 @@ class AboutPage : public PageBase {
   explicit AboutPage(QWidget* parent = nullptr);
   void refreshPage() override;
 
+ private Q_SLOTS:
+  void onRecheck();  // 重新跑一遍一致性自检
+  void onRepair();   // 按预约表把 booked 重新对账
+
  private:
+  void fillHealth();
+  void fillOps();
+
   QTableWidget* structTable_ = nullptr;
   QTableWidget* entityTable_ = nullptr;
   QLabel* summary_ = nullptr;
+  QLabel* healthLabel_ = nullptr;   // 一致性自检结论
+  QTableWidget* opsTable_ = nullptr;  // 审计日志
 };
 
 }  // namespace qt

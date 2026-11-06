@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  qt_app.h  —  主窗口
  *
  *  Qt 原生风格的骨架：
@@ -39,6 +39,7 @@ class MainWindow : public QMainWindow {
 
  public:
   explicit MainWindow(QWidget* parent = nullptr);
+  ~MainWindow() override;  // 退出时清掉自己的心跳槽
 
   // 切到某一页（菜单、工具栏、导航栏、跨页跳转都走这里）
   void switchPage(int page);

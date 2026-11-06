@@ -48,7 +48,7 @@ namespace shared {
 // 共享区文件头的魔数与布局版本。两端编译产物不一致时靠它们立刻发现，
 // 而不是把内存按错误的布局解释成垃圾数据。
 constexpr uint32_t kMagic = 0x44505348u;  // 'H' 'S' 'P' 'D'（小端）
-constexpr uint32_t kLayoutVersion = 2u;  // 2：Booking 加了 rated 字段
+constexpr uint32_t kLayoutVersion = 3u;  // 3：共享区加了心跳槽（PeerSlot）
 
 struct Header {
   uint32_t magic;           // 必须等于 kMagic
@@ -72,6 +72,7 @@ enum OpKind {
   OP_STOP_CANCEL = 8,  // 停诊时自动取消了预约
   OP_RATE = 9,     // 患者评价
   OP_RESUME = 10,  // 恢复出诊
+  OP_REPAIR = 11,  // 一致性修复
 };
 
 // 一条审计记录。对应真实医院信息系统里「号源变动可追溯」的要求。
@@ -87,11 +88,29 @@ struct OpEntry {
 
 constexpr int kOpLogSize = 256;
 
+// ---- 心跳槽：让每个进程能看出「另一端还活着吗」----
+// 为什么需要：两个进程共享数据，如果对端崩溃（或被强行关掉），
+// 本端看到的是"最后写入的状态"，看起来一切正常；但从那一刻起
+// 就不会再有别人进来改数据了。界面上提示一句「对端已退出」，
+// 可以避免把「另一端没反应」误判成「功能不好使」。
+//
+// 每个进程定期刷自己的槽：pid + 角色 + 时间戳。超过 kPeerTimeoutSec 没刷新
+// 就认为它已经不在（正常退出会主动清掉自己的槽）。
+struct PeerSlot {
+  uint32_t pid;       // 0 表示空位
+  uint32_t role;      // 1=患者端 2=管理端 3=字符界面
+  uint32_t lastSeen;  // time_t，最后一次心跳
+  uint32_t reserved;
+};
+constexpr int kMaxPeers = 4;
+constexpr uint32_t kPeerTimeoutSec = 5;
+
 // 共享区的完整布局
 struct Block {
   Header header;
   Hospital hospital;
   OpEntry ops[kOpLogSize];
+  PeerSlot peers[kMaxPeers];
 };
 
 // ---------------------------------------------------------------------------
@@ -121,6 +140,32 @@ void bump();
 
 // 追加一条审计记录。同样必须在持有 Lock 时调用。
 void logOp(int op, int patient, int doctor, int result);
+
+// ---- 审计日志的读取（界面显示用）----
+// opEntries() 返回环形数组首地址（kOpLogSize 条，可能含空位：seq == 0）；
+// opFillCount() 返回已经写过的条数（最多 kOpLogSize，环形覆盖后会停在 kOpLogSize）。
+// 单进程模式下两者分别返回 nullptr 与 0。
+const OpEntry* opEntries();
+int opFillCount();
+
+// 操作类别的中文名（界面显示用）
+const char* opName(int op);
+
+// ---- 心跳 ----
+// 登记/刷新自己（role 见 PeerRole）。程序退出时调用 leave() 清掉自己的槽。
+void join(uint32_t role);
+void beat();
+void leave();
+
+enum PeerRole { ROLE_NONE = 0, ROLE_PATIENT = 1, ROLE_ADMIN = 2, ROLE_CONSOLE = 3 };
+const char* roleText(uint32_t role);
+
+// 当前有几个「活着的对端」（不含自己）
+int alivePeers();
+// 取第 i 个活着的对端信息；返回 false 表示没有这个下标
+bool peerInfo(int i, uint32_t* pid, uint32_t* role);
+// 有没有对端是「不正常退出」的（槽还占着但心跳超时）
+bool hasStalePeer();
 
 // ---------------------------------------------------------------------------
 //  跨进程互斥（RAII）

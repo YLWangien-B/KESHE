@@ -65,6 +65,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   lastGeneration_ = shared::generation();
   pollTimer_ = new QTimer(this);
   connect(pollTimer_, &QTimer::timeout, this, [this]() {
+    // 每次轮询顺便报一次心跳：让另一端知道本进程还活着
+    shared::beat();
+
     const uint32_t g = shared::generation();
     if (g == lastGeneration_) return;
     lastGeneration_ = g;
@@ -77,6 +80,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   });
   // 单进程模式下 generation 恒为 0，定时器不做任何事，没有额外开销。
   pollTimer_->start(700);
+}
+
+MainWindow::~MainWindow() {
+  // 主动清掉心跳槽：另一端/下一次启动就能立刻看出「本进程是正常退出」而不是崩溃
+  shared::leave();
+  shared::close();
 }
 
 // =============================================================================
@@ -333,7 +342,28 @@ void MainWindow::onShowAboutDialog() {
 void MainWindow::updateStatusSummary() {
   Hospital& h = db();
   if (statusData_) {
-    statusData_->setText(QStringLiteral("科室 %1 · 症状 %2（关联 %3） · 医生 %4 · 患者 %5 · 房间 %6")
+    // 运行模式与写计数摆在最前面：排查「为什么另一端看不到我的改动」时一眼就知道
+    QString mode;
+    if (shared::isOpen()) {
+      const int peers = shared::alivePeers();
+      if (peers > 0) {
+        uint32_t pid = 0, role = 0;
+        shared::peerInfo(0, &pid, &role);
+        mode = QStringLiteral("[共享 · 对端 %1 个：%2 · 写计数 %3] ")
+                   .arg(peers)
+                   .arg(QString::fromUtf8(shared::roleText(role)))
+                   .arg(shared::generation());
+      } else if (shared::hasStalePeer()) {
+        // 槽还占着但心跳停了 —— 说明对端是被强杀/崩溃的
+        mode = QStringLiteral("[共享 · 对端异常退出 · 写计数 %1] ")
+                   .arg(shared::generation());
+      } else {
+        mode = QStringLiteral("[共享 · 暂无对端 · 写计数 %1] ").arg(shared::generation());
+      }
+    } else {
+      mode = QStringLiteral("[单进程] ");
+    }
+    statusData_->setText(mode + QStringLiteral("科室 %1 · 症状 %2（关联 %3） · 医生 %4 · 患者 %5 · 房间 %6")
                              .arg(h.depts.size())
                              .arg(h.symptomGraph.symptomCount())
                              .arg(h.symptomGraph.edgeCount())

@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  main.cpp  —  程序入口
  *
  *  一个医院门诊预约与智能导诊系统，分三层：
@@ -83,14 +83,20 @@ int main(int argc, char** argv) {
     }
   }
 
+  bool dataReady = false;
   if (g_shared) {
     // 共享模式：数据在共享内存里，由第一个启动的进程负责装载
     std::printf("\n正在连接共享数据区（目录 %s）...\n", g_dataDir);
-    if (!shared::open(g_dataDir)) {
-      std::printf("[错误] 无法连接共享数据区。\n");
-      return 1;
+    if (shared::open(g_dataDir)) {
+      dataReady = true;
+      shared::join(shared::ROLE_CONSOLE);
+    } else {
+      // 健壮性：共享区用不了就退回单进程模式，功能照常
+      std::printf("[警告] 共享数据区连接失败，退回单进程模式。\n");
+      g_shared = false;
     }
-  } else {
+  }
+  if (!dataReady) {
     std::printf("\n正在装载数据（目录 %s）...\n", g_dataDir);
     if (!Loader::loadAll(db(), g_dataDir)) {
       std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe %s\n", g_dataDir);
@@ -133,6 +139,7 @@ int main(int argc, char** argv) {
     switch (choice) {
       case 0:
         std::printf("\n感谢使用，再见。\n");
+        shared::leave();  // 主动清掉自己的心跳槽，另一端立刻能看出本端已退出
         shared::close();  // 共享模式下解除映射（不调用也会随进程结束释放）
         return 0;
       case 1: doTriage(); break;

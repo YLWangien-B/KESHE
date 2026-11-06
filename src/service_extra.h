@@ -243,3 +243,156 @@ inline int recommend(const Hospital& h, int dept, int day, int slot, int* out, i
 }
 
 }  // namespace Referral
+
+// =============================================================================
+//  健壮性：数据一致性自检（自选功能）
+//
+//  为什么需要它：两个程序通过共享内存同时改数据，一旦某次写入撞上崩溃、
+//  或者哪段代码忘了同步维护 slot.booked，数据就会"看着能跑，数字对不上"。
+//  更糟的是这种不一致不会报错 —— 它只是让余号慢慢算错，直到某天
+//  号被约光了却还有人能约上（超卖），或者明明有号却约不上。
+//
+//  这个自检把「应该成立的等式」逐条核对一遍：
+//      slot.booked == 该时段状态为「已预约」的记录条数
+//  另外检查所有下标引用是否有效（指向不存在的医生/患者就是脏数据）。
+//
+//  它只读不写，可以在任何时候安全调用。
+// =============================================================================
+namespace Health {
+
+struct Report {
+  int totalBookings = 0;   // 预约表总条数
+  int activeBookings = 0;  // 其中状态为「已预约」的
+  int slotUnder = 0;       // booked **小于**预约表条数的时段数 —— 危险，可能超卖
+  int slotOver = 0;        // booked 大于预约表条数 —— 多半是数据文件自带的初始已约数
+  int badBooking = 0;      // 指向不存在的医生/患者/时段的预约条数
+  int badWaiting = 0;      // 候诊队列里指向不存在的患者/医生的条数
+  int negativeBooked = 0;  // booked 出现负数的时段数（不该发生）
+  int nearCapacity = 0;    // 已用超过 90% 容量的表数
+
+  // 只有「会算错号」的问题才算不一致。
+  // slotOver 不计入：数据文件本来就带初始已约数（医院已有的预约记录不在本系统里），
+  // 那种情况 booked 大于预约表条数是正常的。
+  bool ok() const {
+    return slotUnder == 0 && badBooking == 0 && badWaiting == 0 && negativeBooked == 0;
+  }
+};
+
+inline Report check(const Hospital& h) {
+  Report r;
+  r.totalBookings = h.bookings.size();
+
+  // 实际「已预约」的条数，按 (医生, 日期, 时段) 分开计数。
+  // 上限是 kMaxDoctor × kMaxDay × 2 个时段 = 64 × 7 × 2 = 896 个 int，约 3.5 KB，
+  // 放在栈上没问题（数据总库本身才不在栈上）。
+  int expect[kMaxDoctor][kMaxDay][2];
+  for (int d = 0; d < kMaxDoctor; ++d)
+    for (int day = 0; day < kMaxDay; ++day)
+      for (int s = 0; s < 2; ++s) expect[d][day][s] = 0;
+
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient < 0 || b.patient >= h.patients.size()) {
+      ++r.badBooking;
+      continue;
+    }
+    if (b.doctor < 0 || b.doctor >= h.doctors.size()) {
+      ++r.badBooking;
+      continue;
+    }
+    if (b.day < 0 || b.day >= kMaxDay || b.slot < 0 || b.slot >= 2) {
+      ++r.badBooking;
+      continue;
+    }
+    if (b.status == BOOKED) {
+      ++r.activeBookings;
+      ++expect[b.doctor][b.day][b.slot];
+    }
+  }
+
+  // 逐槽核对
+  for (int d = 0; d < h.doctors.size(); ++d) {
+    for (int day = 0; day < kMaxDay; ++day) {
+      for (int s = 0; s < 2; ++s) {
+        const ScheduleSlot& slot = h.doctors[d].schedule.slot(day, s);
+        if (slot.booked < 0) {
+          ++r.negativeBooked;
+          continue;
+        }
+        if (slot.booked < expect[d][day][s])
+          ++r.slotUnder;  // 系统以为还有号，其实已经被约走了 —— 会超卖
+        else if (slot.booked > expect[d][day][s])
+          ++r.slotOver;   // 数据文件自带的初始已约数，属正常
+      }
+    }
+  }
+
+  // 候诊队列的下标有效性
+  for (int i = 0; i < h.waiting.size(); ++i) {
+    const Waiting& w = h.waiting.at(i);
+    if (w.patient < 0 || w.patient >= h.patients.size()) ++r.badWaiting;
+    else if (w.doctor < 0 || w.doctor >= h.doctors.size()) ++r.badWaiting;
+  }
+
+  // 容量接近上限的表（装满了再往里 push 会静默丢记录，值得提前提醒）
+  struct { int used; int cap; } tables[] = {
+      {h.depts.size(), kMaxDept},       {h.doctors.size(), kMaxDoctor},
+      {h.patients.size(), kMaxPatient}, {h.bookings.size(), kMaxBook},
+      {h.rooms.size(), kMaxRoom},
+      {h.symptomGraph.symptomCount(), BipartiteGraph::kMaxSymptoms},
+      {h.waiting.size(), kMaxWaiting},
+  };
+  for (int i = 0; i < static_cast<int>(sizeof(tables) / sizeof(tables[0])); ++i) {
+    if (tables[i].cap > 0 && tables[i].used * 10 >= tables[i].cap * 9) ++r.nearCapacity;
+  }
+
+  return r;
+}
+
+// 按预约表把每个时段的 booked 重新算一遍并写回。返回修正的槽数。
+//
+// 什么时候用：自检报告「余额对不上」的时候。把 booked 当成派生值重算，
+// 是唯一能自动恢复的办法 —— 因为预约表是**事实**，booked 只是它的计数缓存。
+// 修正后递增版本号，让此前读到余号的界面信息作废。
+//
+// 注意：这会把 booked 覆盖成「按预约表算出来的值」，所以只在确认不一致时用。
+inline int repair(Hospital& h) {
+  shared::Lock lock;
+
+  int expect[kMaxDoctor][kMaxDay][2];
+  for (int d = 0; d < kMaxDoctor; ++d)
+    for (int day = 0; day < kMaxDay; ++day)
+      for (int s = 0; s < 2; ++s) expect[d][day][s] = 0;
+
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.status != BOOKED) continue;
+    if (b.doctor < 0 || b.doctor >= h.doctors.size()) continue;
+    if (b.day < 0 || b.day >= kMaxDay || b.slot < 0 || b.slot >= 2) continue;
+    ++expect[b.doctor][b.day][b.slot];
+  }
+
+  // 只修「少算」的方向（booked < 预约表）。
+  // booked 偏大时不能往下抹 —— 那可能是数据文件里自带的初始已约数，
+  // 抹掉就等于凭空多放号出来。
+  int fixed = 0;
+  for (int d = 0; d < h.doctors.size(); ++d) {
+    for (int day = 0; day < kMaxDay; ++day) {
+      for (int s = 0; s < 2; ++s) {
+        ScheduleSlot& slot = h.doctors[d].schedule.slot(day, s);
+        if (slot.booked < expect[d][day][s]) {
+          slot.booked = expect[d][day][s];
+          slot.version = ++h.versionClock;
+          ++fixed;
+        }
+      }
+    }
+  }
+  if (fixed > 0) {
+    shared::logOp(shared::OP_REPAIR, -1, -1, fixed);
+    shared::bump();
+  }
+  return fixed;
+}
+
+}  // namespace Health

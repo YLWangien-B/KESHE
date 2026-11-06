@@ -115,16 +115,27 @@ int main(int argc, char** argv) {
   std::printf("数据目录：%s\n", qt::state().dataDir);
 
   // ---- 装载数据（与另外两个界面共用同一份 Loader）----
+  bool dataReady = false;
   if (sharedMode) {
     // 共享模式：数据在共享内存里（data\state.bin），由第一个启动的程序装载
     std::printf("正在连接共享数据区...\n");
-    if (!shared::open(qt::state().dataDir)) {
-      QMessageBox::critical(nullptr, QStringLiteral("连接失败"),
-                            QStringLiteral("无法连接共享数据区。\n\n数据目录：%1")
-                                .arg(absForDisplay));
-      return 1;
+    if (shared::open(qt::state().dataDir)) {
+      dataReady = true;
+      // 登记心跳：另一端能从共享区看到"谁在跑"，崩溃后也能看出来
+      shared::join(qt::isAdmin() ? shared::ROLE_ADMIN : shared::ROLE_PATIENT);
+    } else {
+      // 健壮性：共享区用不了不该让程序罢工。
+      // 退回单进程模式，功能照常，只是看不到另一个程序的改动。
+      std::printf("[警告] 共享数据区连接失败，退回单进程模式。\n");
+      sharedMode = false;
+      QMessageBox::warning(nullptr, QStringLiteral("共享模式不可用"),
+                           QStringLiteral("无法连接共享数据区，已退回单进程模式。\n\n"
+                                          "本程序仍可正常使用，但看不到另一个程序的改动。\n"
+                                          "数据目录：%1")
+                               .arg(absForDisplay));
     }
-  } else if (!Loader::loadAll(db(), qt::state().dataDir)) {
+  }
+  if (!dataReady && !Loader::loadAll(db(), qt::state().dataDir)) {
     const QString msg = QStringLiteral("数据装载失败。\n\n数据目录：%1\n\n"
                                        "请先运行 tools\\build.bat gen 生成测试数据，"
                                        "或用参数指定正确的数据目录。")
