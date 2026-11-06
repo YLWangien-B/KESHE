@@ -83,6 +83,31 @@ inline void text(const Doctor& d, char* buf, int cap) {
 //  患者端在「预约管理」里就能看到「因停诊取消，请改约」。
 //  没有做真正的消息推送（那需要服务端与公网），这一点在文档里如实说明。
 // =============================================================================
+// =============================================================================
+//  健壮性 / 实用：预约冲突检测
+//
+//  同一个人不可能同时出现在两个诊室。但系统里没有任何东西阻止患者
+//  在「周一上午」约两个不同科室的医生 —— 到那天两份凭证都有效，两边都能
+//  签到，人却只有一个。这是真实使用中一定会踩到的坑。
+//
+//  判据只看 day + slot：具体星期几、上午还是下午，同一时段只能有一张有效预约。
+// =============================================================================
+namespace BookingOps {
+
+// 同一患者在同一时段是否已经有「已预约」的记录。
+// 有则返回那条记录的凭证号（可直接拿去显示），没有返回 nullptr。
+inline const char* sameSlotConflict(const Hospital& h, int patient, int day, int slot) {
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient != patient) continue;
+    if (b.status != BOOKED) continue;  // 取消/完成/被改约的不算冲突
+    if (b.day == day && b.slot == slot) return b.ticket;
+  }
+  return nullptr;
+}
+
+}  // namespace BookingOps
+
 namespace StopClinic {
 
 // 把某医生某时段设为停诊，并把该时段所有「已预约」的记录标记为「因停诊取消」。
@@ -90,31 +115,135 @@ namespace StopClinic {
 //
 // 整个「置停诊 + 遍历预约 + 改状态」在同一个临界区里完成，
 // 否则患者端可能正好在中间插进来抢到一个本该停掉的号。
-inline int apply(Hospital& h, int doctor, int day, int slot) {
-  if (!h.hasSchedule(doctor, day, slot)) return -1;
+// 停诊的结果统计（比只返回一个数更有用：管理者要知道改约成功几个、几个没着落）
+struct StopResult {
+  int affected = 0;     // 受影响（原本已预约）的条数
+  int rescheduled = 0;  // 成功自动改约的条数
+  int failed = 0;       // 找不到合适时段、只能等患者自己重约的条数
+  bool valid = true;    // false = 该时段本来就没排班
+};
+
+// 给某条受影响的预约找替代时段，按优先级依次试：
+//   ① 同一位医生、同一天、另一个时段
+//   ② 同一位医生、其它天、同一时段
+//   ③ 同科室（该科室还有余号）、同一天、同一时段
+// 找到就返回 true，并通过传出参数给出新的 (医生, 日期, 时段)。
+//
+// 为什么是这个顺序：尽量少改动患者已经记住的信息 ——
+// 先保住医生和日期、换时段；再保住医生和时段、换日期；最后才换医生。
+inline bool findAlternative(const Hospital& h, int doctor, int day, int slot, int* outDoctor,
+                            int* outDay, int* outSlot) {
+  // ① 同医生 同一天 另一个时段
+  for (int s2 = 0; s2 < 2; ++s2) {
+    if (s2 == slot) continue;
+    if (h.remaining(doctor, day, s2) > 0) {
+      *outDoctor = doctor;
+      *outDay = day;
+      *outSlot = s2;
+      return true;
+    }
+  }
+  // ② 同医生 其它天 同一时段
+  for (int d2 = 0; d2 < kMaxDay; ++d2) {
+    if (d2 == day) continue;
+    if (h.remaining(doctor, d2, slot) > 0) {
+      *outDoctor = doctor;
+      *outDay = d2;
+      *outSlot = slot;
+      return true;
+    }
+  }
+  // ③ 同科室 其它医生 同一天 同一时段
+  const int dept = h.doctors[doctor].dept;
+  for (int doc2 = 0; doc2 < h.doctors.size(); ++doc2) {
+    if (doc2 == doctor) continue;
+    if (h.doctors[doc2].dept != dept) continue;
+    if (h.remaining(doc2, day, slot) > 0) {
+      *outDoctor = doc2;
+      *outDay = day;
+      *outSlot = slot;
+      return true;
+    }
+  }
+  return false;
+}
+
+// 停诊 + 自动改约（扩展要求第 2 条的完整闭环）
+//
+// 只"通知患者已停诊"是不够的 —— 患者还得自己从头重约一遍。
+// 这里在停诊的同时就把受影响的人改到替代时段，生成新凭证，
+// 原记录标记为「已改约」留痕。这样管理者一条操作就把事情办完了。
+inline StopResult applyAndReschedule(Hospital& h, int doctor, int day, int slot) {
+  StopResult r;
+  if (!h.hasSchedule(doctor, day, slot)) {
+    r.valid = false;
+    return r;
+  }
 
   shared::Lock lock;
   ScheduleSlot& s = h.slot(doctor, day, slot);
-  if (s.stopped) return 0;  // 已经停诊了
+  if (s.stopped) return r;  // 已经停诊了
 
   s.stopped = true;
   s.version = ++h.versionClock;
 
-  int affected = 0;
-  for (int i = 0; i < h.bookings.size(); ++i) {
+  // 注意：循环里会往 h.bookings 里追加新记录，所以先把原条数记下来，
+  // 否则新记录也会被当成"受影响的预约"再处理一遍。
+  const int originalCount = h.bookings.size();
+
+  for (int i = 0; i < originalCount; ++i) {
     Booking& b = h.bookings[i];
     if (b.doctor != doctor || b.day != day || b.slot != slot) continue;
     if (b.status != BOOKED) continue;
 
-    b.status = STOPPED_CANCEL;  // 通知已送达：这条预约因停诊而取消
+    ++r.affected;
     if (s.booked > 0) --s.booked;
-    ++affected;
-    shared::logOp(shared::OP_STOP, b.patient, doctor, i);
+
+    int nd = -1, nday = -1, nslot = -1;
+    if (!findAlternative(h, doctor, day, slot, &nd, &nday, &nslot)) {
+      // 没有可改约的时段：只能标记为「因停诊取消」，让患者自己重约
+      b.status = STOPPED_CANCEL;
+      ++r.failed;
+      shared::logOp(shared::OP_STOP, b.patient, doctor, i);
+      continue;
+    }
+
+    // 原记录留痕
+    b.status = RESCHEDULED;
+    const int patient = b.patient;
+
+    // 新记录：新凭证 + 新时段
+    Booking nb;
+    std::snprintf(nb.ticket, sizeof(nb.ticket), "TK%04d", ++h.ticketSeq);
+    nb.patient = patient;
+    nb.doctor = nd;
+    nb.day = nday;
+    nb.slot = nslot;
+    nb.status = BOOKED;
+    nb.rated = 0;
+    if (h.bookings.push(nb) >= 0) {
+      // 新时段占号
+      ScheduleSlot& ns = h.slot(nd, nday, nslot);
+      ++ns.booked;
+      ns.version = ++h.versionClock;
+      ++r.rescheduled;
+      shared::logOp(shared::OP_RESCHEDULE, patient, nd, nday);
+    } else {
+      // 预约表满了：改约失败，退回「因停诊取消」
+      b.status = STOPPED_CANCEL;
+      ++r.failed;
+    }
   }
 
-  shared::logOp(shared::OP_STOP, -1, doctor, affected);
+  shared::logOp(shared::OP_STOP, -1, doctor, r.affected);
   shared::bump();
-  return affected;
+  return r;
+}
+
+// 兼容旧接口：只要数量、不要细节时用（返回受影响的条数）
+inline int apply(Hospital& h, int doctor, int day, int slot) {
+  const StopResult r = applyAndReschedule(h, doctor, day, slot);
+  return r.valid ? r.affected : -1;
 }
 
 // 恢复出诊。注意**不会**自动恢复那些因停诊被取消的预约 ——

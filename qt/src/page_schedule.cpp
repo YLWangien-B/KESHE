@@ -347,14 +347,29 @@ void SchedulePage::onStopClicked() {
       QMessageBox::Yes)
     return;
 
-  const int affected = StopClinic::apply(h, selDoctor_, selDay_, selSlot_);
-  if (affected < 0) {
+  // ② 停诊的同时把受影响的患者改到替代时段 —— 只"通知已停诊"是不够的，
+  //    患者还得自己从头重约一遍。改约成功会生成新凭证，原记录留痕。
+  const StopClinic::StopResult r =
+      StopClinic::applyAndReschedule(h, selDoctor_, selDay_, selSlot_);
+  if (!r.valid) {
     notifier().error(QStringLiteral("该时段没有排班，无法停诊"));
     return;
   }
-  notifier().ok(QStringLiteral("已停诊：%1 %2%3，已通知 %4 位已预约患者改约")
-                    .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_))
-                    .arg(affected));
+  if (r.affected == 0) {
+    notifier().ok(QStringLiteral("已停诊：%1 %2%3（该时段本来没有预约，无需通知）")
+                      .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_)));
+  } else if (r.failed == 0) {
+    notifier().ok(QStringLiteral("已停诊：%1 %2%3。%4 位患者已自动改约到其它时段"
+                                 "（新凭证见其预约管理）")
+                      .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_))
+                      .arg(r.rescheduled));
+  } else {
+    notifier().warn(QStringLiteral("已停诊：%1 %2%3。%4 位自动改约成功，%5 位没找到"
+                                   "合适时段，需患者自行重约")
+                        .arg(doctorName(h, selDoctor_), dayText(selDay_), slotText(selSlot_))
+                        .arg(r.rescheduled)
+                        .arg(r.failed));
+  }
 
   // 刷新界面
   onModeChanged(modeCombo_->currentIndex());

@@ -357,6 +357,7 @@ const char* opName(int op) {
     case OP_RATE: return "评价";
     case OP_RESUME: return "恢复出诊";
     case OP_REPAIR: return "一致性修复";
+    case OP_RESCHEDULE: return "停诊自动改约";
     default: return "其他";
   }
 }

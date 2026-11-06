@@ -1,4 +1,4 @@
-/* =============================================================================
+﻿/* =============================================================================
  *  model.h  —  数据模型与数据总库
  *
  *  设计原则（课设够用即可，不追求与现实完全一致，可为了简化代码对模型做简化）：
@@ -79,8 +79,15 @@ struct Patient {
 //   BOOKED          已预约，等待就诊
 //   FINISHED        已完成（管理端点「就诊完成」时置上）—— 只有这种状态才能评价
 //   CANCELLED       患者自己取消的
-//   STOPPED_CANCEL  因医生停诊被取消（扩展要求第 2 条：通知已预约患者）
-enum BookStatus { BOOKED = 0, FINISHED = 1, CANCELLED = 2, STOPPED_CANCEL = 3 };
+//   STOPPED_CANCEL  因医生停诊被取消，且没找到可改约的时段（需患者自己重约）
+//   RESCHEDULED     因医生停诊被系统自动改约（另有一条新记录带着新时段）
+enum BookStatus {
+  BOOKED = 0,
+  FINISHED = 1,
+  CANCELLED = 2,
+  STOPPED_CANCEL = 3,
+  RESCHEDULED = 4,
+};
 
 struct Booking {
   char ticket[16];  // 预约凭证号，如 TK0001

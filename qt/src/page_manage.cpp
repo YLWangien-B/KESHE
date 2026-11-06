@@ -122,6 +122,7 @@ void ManagePage::fillTable() {
       case FINISHED: status = QStringLiteral("已完成"); break;
       case CANCELLED: status = QStringLiteral("已取消"); break;
       case STOPPED_CANCEL: status = QStringLiteral("因停诊取消"); break;
+      case RESCHEDULED: status = QStringLiteral("因停诊改约"); break;
       default: status = QStringLiteral("未知"); break;
     }
     const int left = h.hasSchedule(b.doctor, b.day, b.slot) ? h.remaining(b.doctor, b.day, b.slot) : -1;

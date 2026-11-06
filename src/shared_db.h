@@ -48,7 +48,7 @@ namespace shared {
 // 共享区文件头的魔数与布局版本。两端编译产物不一致时靠它们立刻发现，
 // 而不是把内存按错误的布局解释成垃圾数据。
 constexpr uint32_t kMagic = 0x44505348u;  // 'H' 'S' 'P' 'D'（小端）
-constexpr uint32_t kLayoutVersion = 3u;  // 3：共享区加了心跳槽（PeerSlot）
+constexpr uint32_t kLayoutVersion = 4u;  // 4：BookStatus 增加了 RESCHEDULED
 
 struct Header {
   uint32_t magic;           // 必须等于 kMagic
@@ -73,6 +73,7 @@ enum OpKind {
   OP_RATE = 9,     // 患者评价
   OP_RESUME = 10,  // 恢复出诊
   OP_REPAIR = 11,  // 一致性修复
+  OP_RESCHEDULE = 12,  // 停诊后自动改约
 };
 
 // 一条审计记录。对应真实医院信息系统里「号源变动可追溯」的要求。

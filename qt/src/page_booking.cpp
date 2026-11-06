@@ -221,11 +221,20 @@ void BookingPage::onBook() {
   // 注意：锁里**不能弹对话框**（那是模态的，会把另一端卡住），
   // 所以失败原因先记下来，出了作用域再提示。
   const char* failText = nullptr;
+  char dupBuf[160] = {0};
   Booking b;
   {
     shared::Lock lock;  // 跨进程互斥（单进程模式下是空操作）
+
+    // ① 冲突检测：同一时段只能有一张有效预约
+    const char* dup = BookingOps::sameSlotConflict(h, patient, st.day, st.slot);
     ScheduleSlot& s = h.slot(doctor, st.day, st.slot);
-    if (!h.hasSchedule(doctor, st.day, st.slot)) {
+    if (dup != nullptr) {
+      std::snprintf(dupBuf, sizeof(dupBuf),
+                    "你在该时段已有预约 %s，不能重复预约。请先到「预约管理」取消原预约。",
+                    dup);
+      failText = dupBuf;
+    } else if (!h.hasSchedule(doctor, st.day, st.slot)) {
       failText = "该时段不出诊，预约失败";
     } else if (s.stopped) {
       failText = "该时段已停诊，预约失败";

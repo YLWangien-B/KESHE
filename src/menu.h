@@ -19,6 +19,7 @@
 
 #include "model.h"
 #include "service.h"
+#include "service_extra.h"
 #include "shared_db.h"
 #include "ui.h"
 
@@ -262,11 +263,20 @@ inline void doBook() {
   // 那是在等用户按键，会把另一个程序一直卡住。
   Booking b;
   const char* failText = nullptr;
+  static char dupBuf[128];
   {
     shared::Lock lock;
 
+    // ① 冲突检测：同一个人不可能同时出现在两个诊室。
+    // 没有这一段的话，患者可以在「周一上午」约两个不同科室的医生，
+    // 到那天两份凭证都有效、两边都能签到，人却只有一个。
+    const char* dup = BookingOps::sameSlotConflict(h, patient, day, slot);
     ScheduleSlot& s = h.slot(doctor, day, slot);
-    if (s.stopped) {
+    if (dup != nullptr) {
+      std::snprintf(dupBuf, sizeof(dupBuf),
+                    "你在该时段已有预约 %s，不能重复预约。请先取消原预约。\n", dup);
+      failText = dupBuf;
+    } else if (s.stopped) {
       failText = "该时段已停诊，预约失败。\n";
     } else if (s.quota - s.booked <= 0) {
       failText = "该时段号源已满，预约失败。\n";
