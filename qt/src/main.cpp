@@ -21,8 +21,10 @@
 #include <cstdio>
 
 #include "load.h"
+#include "shared_db.h"
 #include "model.h"
 #include "qt_app.h"
+#include "qt_role.h"
 #include "qt_state.h"
 
 namespace {
@@ -94,11 +96,14 @@ int main(int argc, char** argv) {
   //     hospital_qt.exe mydata          用 mydata\
   //     hospital_qt.exe --shots         逐页截图（开发/文档用）
   bool shootMode = false;
+  bool sharedMode = false;
   QString want = QStringLiteral("data");
   for (int i = 1; i < argc; ++i) {
     const QString arg = QString::fromLocal8Bit(argv[i]);
     if (arg == QStringLiteral("--shots"))
       shootMode = true;
+    else if (arg == QStringLiteral("--shared"))
+      sharedMode = true;  // 与另一个程序共用同一份数据（见 src/shared_db.h）
     else if (!arg.startsWith(QLatin1Char('-')))
       want = arg;
   }
@@ -110,8 +115,16 @@ int main(int argc, char** argv) {
   std::printf("数据目录：%s\n", qt::state().dataDir);
 
   // ---- 装载数据（与另外两个界面共用同一份 Loader）----
-  Hospital& h = db();
-  if (!Loader::loadAll(h, qt::state().dataDir)) {
+  if (sharedMode) {
+    // 共享模式：数据在共享内存里（data\state.bin），由第一个启动的程序装载
+    std::printf("正在连接共享数据区...\n");
+    if (!shared::open(qt::state().dataDir)) {
+      QMessageBox::critical(nullptr, QStringLiteral("连接失败"),
+                            QStringLiteral("无法连接共享数据区。\n\n数据目录：%1")
+                                .arg(absForDisplay));
+      return 1;
+    }
+  } else if (!Loader::loadAll(db(), qt::state().dataDir)) {
     const QString msg = QStringLiteral("数据装载失败。\n\n数据目录：%1\n\n"
                                        "请先运行 tools\\build.bat gen 生成测试数据，"
                                        "或用参数指定正确的数据目录。")
@@ -120,6 +133,10 @@ int main(int argc, char** argv) {
     QMessageBox::critical(nullptr, QStringLiteral("装载失败"), msg);
     return 1;
   }
+
+  // 注意：这个引用必须在 shared::open() 之后取 —— db() 返回的是「当前模式下的
+  // 那份数据」，提前取会拿到本地实例，于是同一个程序里出现两份数据。
+  Hospital& h = db();
 
   std::printf("装载完成：科室 %d 个 / 症状 %d 个（二部图 %d 条关联）/ 医生 %d 名 / "
               "患者 %d 名 / 房间 %d 间\n",
@@ -145,13 +162,18 @@ int main(int argc, char** argv) {
   if (shootMode) {
     const QString outDir = QCoreApplication::applicationDirPath() + QStringLiteral("/qt_shots");
     QDir().mkpath(outDir);
+    int shot = 0;
     for (int page = 0; page < qt::PAGE_COUNT; ++page) {
+      if (!qt::pageEnabled(page)) continue;  // 本角色没有这一页
       window.switchPage(page);
       QApplication::processEvents();
       QApplication::processEvents();
-      const QString path = outDir + QStringLiteral("/page_%1.png").arg(page + 1);
+      const QString path = outDir + QStringLiteral("/%1_%2.png")
+                               .arg(QString::fromUtf8(qt::roleName()))
+                               .arg(++shot);
       const bool ok = window.grab().save(path);
-      std::printf("[shot] %s -> %s\n", qt::pageTitle(page), ok ? "ok" : "FAILED");
+      std::printf("[shot] %s %s -> %s\n", qt::roleName(), qt::pageTitle(page),
+                  ok ? "ok" : "FAILED");
     }
     std::printf("[shot] 全部存到 %s\n", outDir.toLocal8Bit().constData());
     return 0;

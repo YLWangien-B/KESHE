@@ -87,7 +87,7 @@ if /I "%TARGET%"=="gen" (
 rem hospital + db: db.cpp holds the single instance of Hospital, so its
 rem definition exists in exactly one place and is shared with the Qt program
 rem (which compiles the same file - see qt\CMakeLists.txt).
-cl %CFLAGS% /Fe:hospital.exe "%ROOT%\src\main.cpp" "%ROOT%\src\db.cpp"
+cl %CFLAGS% /Fe:hospital.exe "%ROOT%\src\main.cpp" "%ROOT%\src\db.cpp" "%ROOT%\src\shared_db.cpp"
 set "RC=!errorlevel!"
 popd
 exit /b %RC%

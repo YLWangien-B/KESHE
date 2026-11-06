@@ -18,10 +18,13 @@
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 
 #include "load.h"
 #include "qt_common.h"
+#include "qt_role.h"
+#include "shared_db.h"
 #include "qt_widgets.h"
 
 #include "page_about.h"
@@ -36,7 +39,8 @@
 namespace qt {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-  setWindowTitle(QStringLiteral("医院门诊预约与智能导诊系统 —— Qt 图形界面版"));
+  setWindowTitle(QStringLiteral("医院门诊预约与智能导诊系统 —— ") +
+                 QString::fromUtf8(roleName()));
   resize(1200, 820);
 
   stack_ = new QStackedWidget(this);
@@ -52,51 +56,86 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   // 任何页面调 notifier().xxx() 都会走到这里：写日志 + 更新状态栏
   connect(&notifier(), &Notifier::notified, this, &MainWindow::onNotice);
 
-  switchPage(PAGE_TRIAGE);
+  // 本角色可用的第一页
+  if (!pageOrder_.isEmpty()) switchPage(pageOrder_.first());
   updateStatusSummary();
+
+  // ---- 定时轮询共享区的写计数：另一端改了数据就刷新当前页 ----
+  // Qt 是保留模式，控件不会自己跟着别人改的数据变；共享模式下必须主动查。
+  lastGeneration_ = shared::generation();
+  pollTimer_ = new QTimer(this);
+  connect(pollTimer_, &QTimer::timeout, this, [this]() {
+    const uint32_t g = shared::generation();
+    if (g == lastGeneration_) return;
+    lastGeneration_ = g;
+    const int page = currentPage();
+    if (page >= 0 && pages_.size() > page && pages_[page] != nullptr) {
+      pages_[page]->refreshPage();
+    }
+    updateStatusSummary();
+    notifier().info(QStringLiteral("检测到另一端修改了数据，已刷新当前页"));
+  });
+  // 单进程模式下 generation 恒为 0，定时器不做任何事，没有额外开销。
+  pollTimer_->start(700);
 }
 
 // =============================================================================
 //  页面
 // =============================================================================
 void MainWindow::buildPages() {
-  // 顺序必须与 Page 枚举一致
-  pages_ = {
-      new TriagePage(this),    // PAGE_TRIAGE
-      new DoctorPage(this),    // PAGE_DOCTOR
-      new BookingPage(this),   // PAGE_BOOK
-      new ManagePage(this),    // PAGE_MANAGE
-      new SchedulePage(this),  // PAGE_SCHEDULE
-      new RoutePage(this),     // PAGE_ROUTE
-      new QueuePage(this),     // PAGE_QUEUE
-      new AboutPage(this),     // PAGE_ABOUT
-  };
-  for (PageBase* p : pages_) stack_->addWidget(p);
-  Q_ASSERT(pages_.size() == PAGE_COUNT);
+  // pages_ 的下标就是 Page 枚举，本角色用不到的页面留 nullptr。
+  pages_ = QVector<PageBase*>(PAGE_COUNT, nullptr);
+  pages_[PAGE_TRIAGE] = new TriagePage(this);
+  pages_[PAGE_DOCTOR] = new DoctorPage(this);
+  pages_[PAGE_BOOK] = new BookingPage(this);
+  pages_[PAGE_MANAGE] = new ManagePage(this);
+  pages_[PAGE_SCHEDULE] = new SchedulePage(this);
+  pages_[PAGE_ROUTE] = new RoutePage(this);
+  pages_[PAGE_QUEUE] = new QueuePage(this);
+  pages_[PAGE_ABOUT] = new AboutPage(this);
+
+  // 只有本角色能用的页面才进页面栈；pageOrder_ 的顺序就是导航栏与页面栈的顺序。
+  pageOrder_.clear();
+  for (int p = 0; p < PAGE_COUNT; ++p) {
+    if (!pageEnabled(p)) continue;
+    PageBase* pg = pages_[p];
+    if (pg == nullptr) continue;
+    stack_->addWidget(pg);
+    pageOrder_.append(p);
+  }
+  Q_ASSERT(!pageOrder_.isEmpty());
 }
 
 void MainWindow::switchPage(int page) {
   if (page < 0 || page >= PAGE_COUNT) return;
+  if (!pageEnabled(page) || pages_[page] == nullptr) return;  // 本角色没有这一页
+
+  const int idx = pageOrder_.indexOf(page);
+  if (idx < 0) return;
 
   // 切页时刷新一次：Qt 是保留模式，不刷新就会显示旧数据
   pages_[page]->refreshPage();
-  stack_->setCurrentIndex(page);
+  stack_->setCurrentIndex(idx);
 
   // 菜单勾选状态跟着走
-  if (page < pageActions_.size() && pageActions_[page]) {
-    pageActions_[page]->setChecked(true);
-  }
+  if (idx < pageActions_.size() && pageActions_[idx]) pageActions_[idx]->setChecked(true);
 
   // 导航栏选中项跟着走（注意不要反过来再触发一次 switchPage）
   syncingNav_ = true;
-  if (nav_) nav_->setCurrentRow(page);
+  if (nav_) nav_->setCurrentRow(idx);
   syncingNav_ = false;
 
-  if (statusPage_)
+  if (statusPage_) {
     statusPage_->setText(QStringLiteral("当前：") + QString::fromUtf8(pageTitle(page)));
+  }
 }
 
-int MainWindow::currentPage() const { return stack_ ? stack_->currentIndex() : 0; }
+int MainWindow::currentPage() const {
+  if (!stack_) return pageOrder_.isEmpty() ? PAGE_TRIAGE : pageOrder_.first();
+  const int idx = stack_->currentIndex();
+  if (idx < 0 || idx >= pageOrder_.size()) return pageOrder_.isEmpty() ? PAGE_TRIAGE : pageOrder_.first();
+  return pageOrder_[idx];
+}
 
 void MainWindow::afterLoad() {
   updateStatusSummary();
@@ -119,20 +158,21 @@ void MainWindow::buildMenus() {
   quit->setShortcut(QKeySequence::Quit);
   connect(quit, &QAction::triggered, this, &QWidget::close);
 
-  // ---- 功能：八个页面，Ctrl+1..8 直达 ----
+  // ---- 功能：只列本角色可用的页面，Ctrl+1..n 直达 ----
   QMenu* pageMenu = menuBar()->addMenu(QStringLiteral("功能(&N)"));
   auto* group = new QActionGroup(this);
   group->setExclusive(true);
   pageActions_.clear();
-  for (int i = 0; i < PAGE_COUNT; ++i) {
-    QAction* act = pageMenu->addAction(QString::fromUtf8(pageTitle(i)));
+  for (int k = 0; k < pageOrder_.size(); ++k) {
+    const int page = pageOrder_[k];
+    QAction* act = pageMenu->addAction(QString::fromUtf8(pageTitle(page)));
     act->setCheckable(true);
-    if (i < 8) act->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(i + 1)));
+    if (k < 9) act->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(k + 1)));
     group->addAction(act);
     pageActions_.append(act);
-    connect(act, &QAction::triggered, this, [this, i]() { switchPage(i); });
+    connect(act, &QAction::triggered, this, [this, page]() { switchPage(page); });
   }
-  pageActions_[PAGE_TRIAGE]->setChecked(true);
+  if (!pageActions_.isEmpty()) pageActions_.first()->setChecked(true);
 
   // ---- 视图：停靠窗口的显示开关由 Qt 自动加在菜单末尾 ----
   viewMenu_ = menuBar()->addMenu(QStringLiteral("视图(&V)"));
@@ -169,9 +209,10 @@ void MainWindow::buildNavigationDock() {
   dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
   nav_ = new QListWidget(dock);
-  for (int i = 0; i < PAGE_COUNT; ++i)
-    nav_->addItem(QString::fromUtf8(pageTitle(i)));
-  nav_->setCurrentRow(PAGE_TRIAGE);
+  // 只列本角色可用的页面，顺序与 pageOrder_ 一致（行号就是页面栈下标）
+  for (int k = 0; k < pageOrder_.size(); ++k)
+    nav_->addItem(QString::fromUtf8(pageTitle(pageOrder_[k])));
+  nav_->setCurrentRow(0);
   nav_->setMinimumWidth(150);
 
   connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNavRowChanged);
@@ -209,7 +250,8 @@ void MainWindow::buildStatusBar() {
 // =============================================================================
 void MainWindow::onNavRowChanged(int row) {
   if (syncingNav_) return;  // 是代码改的选中项，不要反过来再切一次页
-  switchPage(row);
+  if (row < 0 || row >= pageOrder_.size()) return;
+  switchPage(pageOrder_[row]);
 }
 
 void MainWindow::onReloadData() {

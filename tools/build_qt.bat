@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================================
-rem  build_qt.bat - build the Qt 6 graphical UI (hospital_qt.exe)
+rem  build_qt.bat - build the Qt 6 graphical UI: patient.exe and admin.exe
 rem
 rem  Usage (from anywhere):  tools\build_qt.bat  [clean]
 rem
@@ -93,6 +93,10 @@ cmake --build "%BUILDDIR%" --parallel
 if errorlevel 1 exit /b 1
 
 echo.
-echo [OK] %ROOT%\build\hospital_qt.exe
-echo      Run it with:  tools\run_qt.bat
+echo [OK] %ROOT%\build\patient.exe   (患者端)
+echo [OK] %ROOT%\build\admin.exe     (管理端)
+echo      Run them with:  tools\run_qt.bat patient
+echo                      tools\run_qt.bat admin
+echo      Add --shared to either one to share the same data:
+echo                      tools\run_qt.bat patient --shared
 exit /b 0

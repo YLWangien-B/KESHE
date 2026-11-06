@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
  *  qt_app.h  —  主窗口
  *
  *  Qt 原生风格的骨架：
@@ -69,9 +69,14 @@ class MainWindow : public QMainWindow {
   QMenu* viewMenu_ = nullptr;      // 「视图」菜单，停靠窗口的显示开关加在这里
   QLabel* statusData_ = nullptr;   // 状态栏左侧：数据规模
   QLabel* statusPage_ = nullptr;   // 状态栏右侧：当前页 + 最新提示
+  // pages_ 的下标就是 Page 枚举；本角色不可用的页面留 nullptr。
   QVector<PageBase*> pages_;
-  QVector<QAction*> pageActions_;  // 「功能」菜单里的八个 action
+  // 本角色实际能用的页面，**顺序即导航栏顺序**，也是 QStackedWidget 的顺序。
+  QVector<int> pageOrder_;
+  QVector<QAction*> pageActions_;  // 「功能」菜单里的 action，顺序同 pageOrder_
   bool syncingNav_ = false;        // 防止「代码切页」和「导航栏选中」互相触发
+  uint32_t lastGeneration_ = 0;    // 上次看到的数据写计数（用于感知另一端改了数据）
+  QTimer* pollTimer_ = nullptr;    // 定时轮询共享区的写计数
 };
 
 }  // namespace qt

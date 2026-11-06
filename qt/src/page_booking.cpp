@@ -22,6 +22,7 @@
 
 #include "qt_app.h"
 #include "qt_common.h"
+#include "shared_db.h"
 
 namespace qt {
 
@@ -213,34 +214,45 @@ void BookingPage::onBook() {
   const int doctor = doctorCombo_->currentData().toInt();
   if (doctor < 0 || doctor >= h.doctors.size()) return;
 
-  ScheduleSlot& s = h.slot(doctor, st.day, st.slot);
-  // ---- 检查（这一步到扣减之间不让出执行权）----
-  if (!h.hasSchedule(doctor, st.day, st.slot)) {
-    notifier().error(QStringLiteral("该时段不出诊，预约失败"));
-    return;
-  }
-  if (s.stopped) {
-    notifier().error(QStringLiteral("该时段已停诊，预约失败"));
-    return;
-  }
-  if (s.quota - s.booked <= 0) {
-    notifier().error(QStringLiteral("该时段号源已满，预约失败"));
-    return;
-  }
-
-  // ---- 扣减 + 递增版本号（让此前看到的余号信息作废）----
-  ++s.booked;
-  s.version = ++h.versionClock;
-
+  // ---- 检查 + 扣减（临界区）----
+  // 拆成两个程序之后，「检查与扣减之间不让出执行权」这个前提不再成立 ——
+  // 另一端的程序可能正好也在改同一份数据。所以外面套一把跨进程锁。
+  // 注意：锁里**不能弹对话框**（那是模态的，会把另一端卡住），
+  // 所以失败原因先记下来，出了作用域再提示。
+  const char* failText = nullptr;
   Booking b;
-  std::snprintf(b.ticket, sizeof(b.ticket), "TK%04d", ++h.ticketSeq);
-  b.patient = patient;
-  b.doctor = doctor;
-  b.day = st.day;
-  b.slot = st.slot;
-  b.status = BOOKED;
-  if (h.bookings.push(b) < 0) {
-    notifier().error(QStringLiteral("预约记录表已满（容量 %1），预约失败").arg(kMaxBook));
+  {
+    shared::Lock lock;  // 跨进程互斥（单进程模式下是空操作）
+    ScheduleSlot& s = h.slot(doctor, st.day, st.slot);
+    if (!h.hasSchedule(doctor, st.day, st.slot)) {
+      failText = "该时段不出诊，预约失败";
+    } else if (s.stopped) {
+      failText = "该时段已停诊，预约失败";
+    } else if (s.quota - s.booked <= 0) {
+      failText = "该时段号源已满，预约失败";
+    } else {
+      // 扣减 + 递增版本号（让此前看到的余号信息作废）
+      ++s.booked;
+      s.version = ++h.versionClock;
+
+      std::snprintf(b.ticket, sizeof(b.ticket), "TK%04d", ++h.ticketSeq);
+      b.patient = patient;
+      b.doctor = doctor;
+      b.day = st.day;
+      b.slot = st.slot;
+      b.status = BOOKED;
+      if (h.bookings.push(b) < 0) {
+        // 记满之后回滚号源，否则这个号就永远被吃掉了
+        --s.booked;
+        failText = "预约记录表已满，预约失败";
+      } else {
+        shared::logOp(shared::OP_BOOK, patient, doctor, 0);
+        shared::bump();
+      }
+    }
+  }
+  if (failText != nullptr) {
+    notifier().error(QString::fromUtf8(failText));
     return;
   }
 

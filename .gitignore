@@ -46,3 +46,6 @@ _test/actual.txt
 # 说明：build\ 已在上面整体忽略，这里只是把 Qt 特有的产物说明白
 build/qt/
 build/qt_shots/
+
+# 共享数据区（两进程共享数据用的内存映射文件，运行时生成，不是数据源）
+data/state.bin

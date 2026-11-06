@@ -2,7 +2,12 @@
 rem ============================================================================
 rem  run_qt.bat - build (if needed) and run the Qt graphical program
 rem
-rem  Usage (from anywhere):  tools\run_qt.bat  [data-directory]
+rem  Usage (from anywhere):  tools\run_qt.bat  [patient|admin] [--shared] [data-directory]
+rem
+rem  Examples:
+rem      tools\run_qt.bat                 patient, single process
+rem      tools\run_qt.bat admin           admin, single process
+rem      tools\run_qt.bat patient --shared    shares data with the other program
 rem
 rem  Two things this script must do beyond launching the exe:
 rem    1. switch the working directory to the project root, because the program
@@ -25,7 +30,15 @@ if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "QTDIR=D:\Qt\6.8.3\msvc2022_64"
 
-if not exist "%ROOT%\build\hospital_qt.exe" (
+set "ROLE=%~1"
+if "%ROLE%"=="" set "ROLE=patient"
+if /I not "%ROLE%"=="patient" if /I not "%ROLE%"=="admin" (
+    set "ROLE=patient"
+) else (
+    shift
+)
+
+if not exist "%ROOT%\build\%ROLE%.exe" (
     call "%TOOLDIR%\build_qt.bat"
     if errorlevel 1 exit /b 1
 )
@@ -40,5 +53,5 @@ if not exist "%ROOT%\data\symptoms.txt" (
 
 set "PATH=%QTDIR%\bin;%PATH%"
 cd /d "%ROOT%"
-"%ROOT%\build\hospital_qt.exe" %1
+"%ROOT%\build\%ROLE%.exe" %1
 exit /b %errorlevel%

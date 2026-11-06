@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 
 #include "qt_common.h"
+#include "shared_db.h"
 
 namespace qt {
 
@@ -219,32 +220,54 @@ void ManagePage::onCancelClicked() {
 bool ManagePage::cancelBooking(int patient, const QString& ticket) {
   Hospital& h = db();
   const QByteArray ticketUtf8 = ticket.toUtf8();
-  for (int i = 0; i < h.bookings.size(); ++i) {
-    Booking& b = h.bookings[i];
-    if (b.patient != patient) continue;
-    if (std::strcmp(b.ticket, ticketUtf8.constData()) != 0) continue;
 
-    if (b.status != BOOKED) {
+  // 「找到记录 + 退回号源 + 改状态」必须连着做完，中间不能让另一端插进来，
+  // 否则号源会被重复退回（两个进程都看到同一条「已预约」记录）。
+  // 提示信息不在锁里发 —— notifier 会更新状态栏与日志控件，没必要占着锁。
+  enum Outcome { kOk, kNotBooked, kNotFound } outcome = kNotFound;
+  int leftAfter = 0;
+  {
+    shared::Lock lock;  // 跨进程互斥（单进程模式下是空操作）
+    for (int i = 0; i < h.bookings.size(); ++i) {
+      Booking& b = h.bookings[i];
+      if (b.patient != patient) continue;
+      if (std::strcmp(b.ticket, ticketUtf8.constData()) != 0) continue;
+
+      if (b.status != BOOKED) {
+        outcome = kNotBooked;
+        break;
+      }
+      // 退回号源并递增版本号，让此前看到的余号信息立刻失效
+      if (h.hasSchedule(b.doctor, b.day, b.slot)) {
+        ScheduleSlot& s = h.slot(b.doctor, b.day, b.slot);
+        if (s.booked > 0) {
+          --s.booked;
+          s.version = ++h.versionClock;
+        }
+      }
+      b.status = CANCELLED;
+      leftAfter = h.remaining(b.doctor, b.day, b.slot);
+      shared::logOp(shared::OP_CANCEL, patient, b.doctor, 0);
+      shared::bump();
+      outcome = kOk;
+      break;
+    }
+  }
+
+  switch (outcome) {
+    case kOk:
+      notifier().ok(QStringLiteral("预约 %1 已取消，号源已退回（该时段剩余 %2 个）")
+                        .arg(ticket)
+                        .arg(leftAfter));
+      return true;
+    case kNotBooked:
       notifier().warn(QStringLiteral("预约 %1 不是「已预约」状态，无法取消").arg(ticket));
       return false;
-    }
-    // 退回号源并递增版本号，让此前看到的余号信息立刻失效
-    if (h.hasSchedule(b.doctor, b.day, b.slot)) {
-      ScheduleSlot& s = h.slot(b.doctor, b.day, b.slot);
-      if (s.booked > 0) {
-        --s.booked;
-        s.version = ++h.versionClock;
-      }
-    }
-    b.status = CANCELLED;
-    notifier().ok(QStringLiteral("预约 %1 已取消，号源已退回（该时段剩余 %2 个）")
-                      .arg(ticket)
-                      .arg(h.remaining(b.doctor, b.day, b.slot)));
-    return true;
+    default:
+      notifier().error(QStringLiteral("没有找到凭证号 %1（患者 %2 名下）")
+                           .arg(ticket, patientName(h, patient)));
+      return false;
   }
-  notifier().error(QStringLiteral("没有找到凭证号 %1（患者 %2 名下）")
-                       .arg(ticket, patientName(h, patient)));
-  return false;
 }
 
 }  // namespace qt

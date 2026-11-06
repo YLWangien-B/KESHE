@@ -14,11 +14,21 @@
 //      而是返回 QUEUE_FIRST_CALLED，让医生决定是继续等还是记为过号；
 //    · 记为过号的次数达到 kMaxPass 次后，他重新排到队尾，队列继续往前走；
 //    · 只有医生点「就诊完成」，他才真正离开队列。
+//
+//  ---------------------------------------------------------------------------
+//  并发：下面四个会改动队列的函数（checkIn / callNext / finish / pass）都在开头
+//  取一把跨进程锁（shared::Lock）。单进程模式下它是空操作，行为与拆分之前一致；
+//  共享模式下它保证「患者端签到」与「管理端叫号」不会同时改队列。
+//
+//  注意 pass() 在重新排队时要走 checkIn 的逻辑，但不能再取一次锁，所以真正的
+//  实现放在私有的 checkInImpl() 里，对外的 checkIn() 只是包一层锁。
+//  ---------------------------------------------------------------------------
 //  这样既不会让不守时的人一直堵着队伍，也不会让后来的人插队。
 // =============================================================================
 #pragma once
 
 #include "model.h"
+#include "shared_db.h"
 
 // 候诊操作的结果，供界面给出准确的提示
 enum QueueResult {
@@ -36,18 +46,8 @@ class Queue {
   // ---------------------------- 签到入队 ----------------------------
   // 排队号在同一个医生内从 1 开始递增；同一患者不能重复排队。
   static QueueResult checkIn(Hospital& h, int patient, int doctor) {
-    if (patient < 0 || patient >= h.patients.size()) return QUEUE_NO_DOCTOR;
-    if (doctor < 0 || doctor >= h.doctors.size()) return QUEUE_NO_DOCTOR;
-    if (h.waiting.full()) return QUEUE_FULL;
-    if (indexOf(h, patient, doctor) >= 0) return QUEUE_DUP;
-
-    Waiting w;
-    w.patient = patient;
-    w.doctor = doctor;
-    w.queueNo = nextQueueNo(h, doctor);
-    w.calledCount = 0;
-    h.waiting.push(w);
-    return QUEUE_OK;
+    shared::Lock lock;  // 跨进程互斥：另一端可能正在叫号
+    return checkInImpl(h, patient, doctor);
   }
 
   // ---------------------------- 叫号 ----------------------------
@@ -60,6 +60,7 @@ class Queue {
   // 被叫到的人仍然留在队列里（只把 calledCount 加一），这样患者能看到
   // 「已经叫到我了」；真正离开队列要等医生点「就诊完成」，符合实际流程。
   static QueueResult callNext(Hospital& h, int doctor, int& patient) {
+    shared::Lock lock;  // 跨进程互斥
     patient = -1;
     const int n = h.waiting.size();
     for (int i = 0; i < n; ++i) {
@@ -68,6 +69,8 @@ class Queue {
       if (w.calledCount > 0) return QUEUE_FIRST_CALLED;  // 前面还有人没处理完
       ++w.calledCount;
       patient = w.patient;
+      shared::logOp(shared::OP_CALL, patient, doctor, 0);
+      shared::bump();
       return QUEUE_OK;
     }
     return QUEUE_EMPTY;
@@ -75,9 +78,12 @@ class Queue {
 
   // ---------------------------- 就诊完成，离开队列 ----------------------------
   static QueueResult finish(Hospital& h, int patient, int doctor) {
+    shared::Lock lock;  // 跨进程互斥
     const int i = indexOf(h, patient, doctor);
     if (i < 0) return QUEUE_NOT_FOUND;
     h.waiting.removeAt(i);
+    shared::logOp(shared::OP_FINISH, patient, doctor, 0);
+    shared::bump();
     return QUEUE_OK;
   }
 
@@ -85,15 +91,24 @@ class Queue {
   // 叫了却没来，记一次；记满 kMaxPass 次就重新排到队尾，不再堵着后面的人。
   // 返回 true 表示已经重新排队。
   static bool pass(Hospital& h, int patient, int doctor) {
+    shared::Lock lock;  // 跨进程互斥
     const int i = indexOf(h, patient, doctor);
     if (i < 0) return false;
 
     if (h.waiting.at(i).calledCount >= kMaxPass) {
-      // 叫了这么多次都没来，重新排队：先离开队列，再以新的排队号入队
+      // 叫了这么多次都没来，重新排队：先离开队列，再以新的排队号入队。
+      // 走 checkInImpl 而不是 checkIn —— 本函数开头已经取了锁，不能再取一次
+      // （Windows 的互斥体对同一线程是可重入的，但嵌套取锁会让逻辑难读，
+      //   以后换成不支持重入的锁也会出问题）。
       h.waiting.removeAt(i);
-      return checkIn(h, patient, doctor) == QUEUE_OK;
+      const bool requeued = checkInImpl(h, patient, doctor) == QUEUE_OK;
+      shared::logOp(shared::OP_PASS, patient, doctor, requeued ? 1 : 0);
+      shared::bump();
+      return requeued;
     }
     ++h.waiting.at(i).calledCount;
+    shared::logOp(shared::OP_PASS, patient, doctor, 0);
+    shared::bump();
     return false;
   }
 
@@ -144,6 +159,24 @@ class Queue {
   }
 
  private:
+  // 签到入队的真正实现（不加锁）。对外的 checkIn() 取锁后调用它。
+  static QueueResult checkInImpl(Hospital& h, int patient, int doctor) {
+    if (patient < 0 || patient >= h.patients.size()) return QUEUE_NO_DOCTOR;
+    if (doctor < 0 || doctor >= h.doctors.size()) return QUEUE_NO_DOCTOR;
+    if (h.waiting.full()) return QUEUE_FULL;
+    if (indexOf(h, patient, doctor) >= 0) return QUEUE_DUP;
+
+    Waiting w;
+    w.patient = patient;
+    w.doctor = doctor;
+    w.queueNo = nextQueueNo(h, doctor);
+    w.calledCount = 0;
+    h.waiting.push(w);
+    shared::logOp(shared::OP_CHECKIN, patient, doctor, 0);
+    shared::bump();
+    return QUEUE_OK;
+  }
+
   // 在队列里找该患者，返回他在队列中的次序；找不到返回 -1
   static int indexOf(const Hospital& h, int patient, int doctor) {
     for (int i = 0; i < h.waiting.size(); ++i) {

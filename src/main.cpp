@@ -1,4 +1,4 @@
-﻿/* =============================================================================
+/* =============================================================================
  *  main.cpp  —  程序入口
  *
  *  一个医院门诊预约与智能导诊系统，分三层：
@@ -11,6 +11,7 @@
  * ========================================================================== */
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -24,6 +25,7 @@
 #include "model.h"
 #include "service.h"
 #include "service_queue.h"
+#include "shared_db.h"
 #include "ui.h"
 
 // =============================================================================
@@ -62,23 +64,52 @@ void printMenu() {
 }
 
 // 装载数据所在的目录。允许命令行指定，方便用不同的数据集做测试：
-//     hospital.exe            用当前目录下的 data/
-//     hospital.exe bigdata    用当前目录下的 bigdata/
+//     hospital.exe                     用当前目录下的 data/
+//     hospital.exe bigdata             用当前目录下的 bigdata/
+//     hospital.exe --shared            与另一个程序共享 data/ 下的数据总库
+//     hospital.exe --shared bigdata    共享 bigdata/ 下的数据总库
 static const char* g_dataDir = "data";
+static bool g_shared = false;
 
 int main(int argc, char** argv) {
   setupConsole();
-  if (argc > 1) g_dataDir = argv[1];
-  std::printf("\n正在装载数据（目录 %s）...\n", g_dataDir);
 
-  Hospital& h = db();
-  if (!Loader::loadAll(h, g_dataDir)) {
-    std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe %s\n", g_dataDir);
-    return 1;
+  // 参数解析：--shared 可以出现在任意位置，其余非选项参数当作数据目录
+  for (int i = 1; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--shared") == 0) {
+      g_shared = true;
+    } else if (argv[i][0] != '-') {
+      g_dataDir = argv[i];
+    }
   }
+
+  if (g_shared) {
+    // 共享模式：数据在共享内存里，由第一个启动的进程负责装载
+    std::printf("\n正在连接共享数据区（目录 %s）...\n", g_dataDir);
+    if (!shared::open(g_dataDir)) {
+      std::printf("[错误] 无法连接共享数据区。\n");
+      return 1;
+    }
+  } else {
+    std::printf("\n正在装载数据（目录 %s）...\n", g_dataDir);
+    if (!Loader::loadAll(db(), g_dataDir)) {
+      std::printf("[错误] 数据装载失败。请先运行：build\\gen_data.exe %s\n", g_dataDir);
+      return 1;
+    }
+  }
+
+  // 注意：这个引用必须在 shared::open() **之后**再取。
+  // db() 返回的是「当前模式下的那份数据」—— 如果在 open() 之前就先取了引用，
+  // 拿到的是本地静态实例，之后开的共享区就再也用不上了（各函数里的 db()
+  // 反而都指向共享区，于是同一个程序里出现两份数据）。
+  Hospital& h = db();
+
   std::printf("装载完成：科室 %d 个 / 症状 %d 个（二部图 %d 条关联）/ 医生 %d 名 / 患者 %d 名 / 房间 %d 间\n",
               h.depts.size(), h.symptomGraph.symptomCount(), h.symptomGraph.edgeCount(), h.doctors.size(),
               h.patients.size(), h.rooms.size());
+  if (g_shared) {
+    std::printf("[共享] 已连接：另一个程序对数据的改动，本程序下一次操作就能看到。\n");
+  }
 
   // 装载出问题时把话说清楚：是某几行数据不对，还是容量不够。
   // 容量不够是最容易被忽略的一种失败 —— 数据看着在读，记录却在被悄悄丢掉。
@@ -102,6 +133,7 @@ int main(int argc, char** argv) {
     switch (choice) {
       case 0:
         std::printf("\n感谢使用，再见。\n");
+        shared::close();  // 共享模式下解除映射（不调用也会随进程结束释放）
         return 0;
       case 1: doTriage(); break;
       case 2: doQueryDoctor(); break;

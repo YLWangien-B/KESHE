@@ -19,6 +19,7 @@
 
 #include "model.h"
 #include "service.h"
+#include "shared_db.h"
 #include "ui.h"
 
 // =============================================================================
@@ -251,33 +252,46 @@ inline void doBook() {
     return;
   }
 
-  // ---------- 号源的检查与扣减 ----------
-  // 这三步（停诊检查、余量检查、版本检查）与随后的扣减必须在一次调用里连着做完，
-  // 中间不能让别的操作插进来。做法是：先记下当前版本号，扣减前再比一次；
-  // 版本对不上说明号源刚被改动过，就拒绝这次预约让患者重选，因此不会超卖。
-  // 版本时钟 versionClock 是单调递增的，所以不会出现「改了又改回原版本」的情况。
-  ScheduleSlot& s = h.slot(doctor, day, slot);
-  if (s.stopped) {
-    std::printf("该时段已停诊，预约失败。\n");
-    pause();
-    return;
-  }
-  if (s.quota - s.booked <= 0) {
-    std::printf("该时段号源已满，预约失败。\n");
-    pause();
-    return;
-  }
-  ++s.booked;
-  s.version = ++h.versionClock;
-
+  // ---------- 号源的检查与扣减（临界区）----------
+  // 停诊检查、余量检查、扣减三步必须连着做完，中间不能让别的操作插进来，
+  // 否则两个人同时读到「剩 1 号」就都会扣成功 —— 超卖。
+  //
+  // 单进程时靠「这几行之间没有让出执行权」就够了；但拆成患者端与管理端两个
+  // 进程之后，这个前提不成立了，所以外面套一把跨进程锁（shared::Lock）。
+  // 锁只包住「检查 + 扣减 + 记账」，**不能包住 pause()** ——
+  // 那是在等用户按键，会把另一个程序一直卡住。
   Booking b;
-  std::snprintf(b.ticket, sizeof(b.ticket), "TK%04d", ++h.ticketSeq);
-  b.patient = patient;
-  b.doctor = doctor;
-  b.day = day;
-  b.slot = slot;
-  b.status = BOOKED;
-  h.bookings.push(b);
+  const char* failText = nullptr;
+  {
+    shared::Lock lock;
+
+    ScheduleSlot& s = h.slot(doctor, day, slot);
+    if (s.stopped) {
+      failText = "该时段已停诊，预约失败。\n";
+    } else if (s.quota - s.booked <= 0) {
+      failText = "该时段号源已满，预约失败。\n";
+    } else {
+      ++s.booked;
+      s.version = ++h.versionClock;
+
+      std::snprintf(b.ticket, sizeof(b.ticket), "TK%04d", ++h.ticketSeq);
+      b.patient = patient;
+      b.doctor = doctor;
+      b.day = day;
+      b.slot = slot;
+      b.status = BOOKED;
+      h.bookings.push(b);
+
+      // 共享模式下记一笔审计日志（单进程模式是空操作）
+      shared::logOp(shared::OP_BOOK, patient, doctor, 0);
+      shared::bump();
+    }
+  }
+  if (failText != nullptr) {
+    std::printf("%s", failText);
+    pause();
+    return;
+  }
 
   std::printf("\n---------- 预约凭证 ----------\n");
   std::printf("  凭证号  ：%s\n", b.ticket);
@@ -336,28 +350,38 @@ inline void doManageBooking() {
   if (!readLine(code, sizeof(code))) return;
   if (code[0] == '\0') return;
 
-  for (int i = 0; i < h.bookings.size(); ++i) {
-    Booking& b = h.bookings[i];
-    if (b.patient != patient || std::strcmp(b.ticket, code) != 0) continue;
-    if (b.status != BOOKED) {
-      std::printf("该预约不是「已预约」状态，无法取消。\n");
-      pause();
-      return;
-    }
-    // 取消时把号源退回去，并递增版本号，让此前看到的余号信息立刻失效
-    if (h.hasSchedule(b.doctor, b.day, b.slot)) {
-      ScheduleSlot& s = h.slot(b.doctor, b.day, b.slot);
-      if (s.booked > 0) {
-        --s.booked;
-        s.version = ++h.versionClock;  // 让此前看到的余号信息立刻失效
+  // 取消也要进临界区：「找到记录 + 退回号源 + 改状态」必须连着做完，
+  // 否则另一端正好在记账时会把 booked 改乱。同样不能把 pause() 包进锁里。
+  char msg[128] = {0};
+  {
+    shared::Lock lock;
+    bool found = false;
+    for (int i = 0; i < h.bookings.size(); ++i) {
+      Booking& b = h.bookings[i];
+      if (b.patient != patient || std::strcmp(b.ticket, code) != 0) continue;
+      found = true;
+      if (b.status != BOOKED) {
+        std::snprintf(msg, sizeof(msg), "该预约不是「已预约」状态，无法取消。\n");
+        break;
       }
+      // 取消时把号源退回去，并递增版本号，让此前看到的余号信息立刻失效
+      if (h.hasSchedule(b.doctor, b.day, b.slot)) {
+        ScheduleSlot& s = h.slot(b.doctor, b.day, b.slot);
+        if (s.booked > 0) {
+          --s.booked;
+          s.version = ++h.versionClock;  // 让此前看到的余号信息立刻失效
+        }
+      }
+      b.status = CANCELLED;
+      // 凭证号在锁释放前拷进 msg，之后 b 可能被另一个进程改掉
+      std::snprintf(msg, sizeof(msg), "预约 %s 已取消，号源已退回。\n", b.ticket);
+      shared::logOp(shared::OP_CANCEL, patient, b.doctor, 0);
+      shared::bump();
+      break;
     }
-    b.status = CANCELLED;
-    std::printf("预约 %s 已取消，号源已退回。\n", b.ticket);
-    pause();
-    return;
+    if (!found) std::snprintf(msg, sizeof(msg), "没有找到该凭证号。\n");
   }
-  std::printf("没有找到该凭证号。\n");
+  std::printf("%s", msg);
   pause();
 }
 

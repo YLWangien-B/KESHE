@@ -117,6 +117,7 @@
          被 include 进来编译，不需要单独列出 -->
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\db.cpp" />
+    <ClCompile Include="src\shared_db.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ds.h" />
