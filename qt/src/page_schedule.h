@@ -32,6 +32,7 @@ class SchedulePage : public PageBase {
   void onCellActivated(int row, int col);
   void onStopClicked();   // 扩展要求第 2 条：设为停诊并通知已预约患者
   void onResumeClicked(); // 恢复出诊
+  void onShiftClicked();  // 换班：把该时段的坐诊医生换成另一位
 
  private:
   void rebuildDoctorCombos();
@@ -48,6 +49,7 @@ class SchedulePage : public PageBase {
   QLabel* hintLabel_ = nullptr;
   QPushButton* stopBtn_ = nullptr;
   QPushButton* resumeBtn_ = nullptr;
+  QPushButton* shiftBtn_ = nullptr;  // 换班
   QLabel* selLabel_ = nullptr;   // 当前选中的「医生 + 日期 + 时段」
   // 选中的格子（管理端点格子不再跳预约页，而是记住它供停诊用）
   int selDoctor_ = -1;

@@ -76,6 +76,7 @@ enum OpKind {
   OP_RESCHEDULE = 12,   // 停诊后自动改约
   OP_ADD_PATIENT = 13,  // 登记新患者
   OP_ADD_DOCTOR = 14,   // 登记新医生
+  OP_SHIFT = 15,        // 换班（号源带预约转移）
 };
 
 // 一条审计记录。对应真实医院信息系统里「号源变动可追溯」的要求。

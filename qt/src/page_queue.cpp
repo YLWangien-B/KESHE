@@ -88,6 +88,12 @@ void QueuePage::refreshPage() {
     patientCombo_->setCurrentIndex(want);
     st.patient = want;
   }
+  // 患者端已登录：只能给自己签到
+  if (st.loggedIn) {
+    patientCombo_->setCurrentIndex(st.patient);
+    patientCombo_->setEnabled(false);
+    patientCombo_->setToolTip(QStringLiteral("当前登录患者（不可切换）"));
+  }
 
   // 医生下拉框
   const int keepD = doctorCombo_->currentIndex();

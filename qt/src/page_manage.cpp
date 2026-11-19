@@ -90,6 +90,12 @@ void ManagePage::refreshPage() {
   if (want < 0 || want >= patientCombo_->count()) want = 0;
   patientCombo_->setCurrentIndex(want);
   st.patient = want;
+  // 患者端已登录：只能看自己的预约
+  if (st.loggedIn) {
+    patientCombo_->setCurrentIndex(st.patient);
+    patientCombo_->setEnabled(false);
+    patientCombo_->setToolTip(QStringLiteral("当前登录患者（不可切换）"));
+  }
 
   fillTable();
 }

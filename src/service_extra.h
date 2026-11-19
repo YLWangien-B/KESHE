@@ -77,6 +77,208 @@ inline void text(const Doctor& d, char* buf, int cap) {
 }  // namespace Rating
 
 // =============================================================================
+//  扩展 3 的后半句：让评分**真正参与**医生推荐
+//
+//  题目原文：「患者就诊后可对医生进行评价，**在科室预约推荐时参考评分**」。
+//  之前只做到"能评价、能显示"，排序完全没用它 —— 这一块补上。
+//
+//  关键的取舍（上一轮就说过）：**不能把评分混进科室得分**。
+//  科室得分衡量"症状匹配度"（二部图边权和，1~5），评分衡量"医生好不好"（1~5），
+//  两者数值范围一样但含义完全不同，直接相加会让"医生态度好"盖过"症状根本不匹配"，
+//  推荐出无关科室。
+//
+//  正确做法是**分层**：
+//      科室排序：仍然只看症状匹配（不变）
+//      医生排序：评分 50% + 职称 30% + 余号 20%   ← 评分在这里起作用
+//  这样两个维度各司其职，也符合真实挂号的逻辑：先定科室，再在科室内挑医生。
+// =============================================================================
+namespace DoctorRank {
+
+// 职称的含金量（0..100）
+inline int titleScore(const char* title) {
+  if (title == nullptr) return 0;
+  if (std::strcmp(title, "主任医师") == 0) return 100;
+  if (std::strcmp(title, "副主任医师") == 0) return 75;
+  if (std::strcmp(title, "主治医师") == 0) return 50;
+  if (std::strcmp(title, "住院医师") == 0) return 25;
+  return 0;
+}
+
+// rankQuality 内部用的分数（与上面同一套公式，只是不含号源项）
+inline int rankQualityScore(const Hospital& h, int doctor) {
+  if (doctor < 0 || doctor >= h.doctors.size()) return 0;
+  const Doctor& d = h.doctors[doctor];
+  const int avg10 = Rating::average10(d);
+  const int rating = (avg10 < 0) ? 60 : (avg10 * 2);
+  return (rating * 50 + titleScore(d.title) * 30) / 80;
+}
+
+// 综合推荐分 0..100。三项权重 50 / 30 / 20。
+// 无人评价的医生评分项按 60 分算（中性，既不惩罚新医生，也不让他占便宜）。
+inline int score(const Hospital& h, int doctor, int day, int slot) {
+  if (doctor < 0 || doctor >= h.doctors.size()) return 0;
+  const Doctor& d = h.doctors[doctor];
+
+  const int avg10 = Rating::average10(d);          // 0..50（即 0.0~5.0 分）
+  const int rating = (avg10 < 0) ? 60 : (avg10 * 2);  // 折算成 0..100
+
+  const int title = titleScore(d.title);
+
+  int freeScore = 0;
+  if (h.hasSchedule(doctor, day, slot)) {
+    const ScheduleSlot& s = h.doctors[doctor].schedule.slot(day, slot);
+    if (!s.stopped && s.quota > 0) {
+      const int left = s.quota - s.booked;
+      freeScore = (left <= 0) ? 0 : (left * 100 / s.quota);
+    }
+  }
+
+  return (rating * 50 + title * 30 + freeScore * 20) / 100;
+}
+
+// 把某科室在该时段的医生按综合推荐分降序写进 out（最多 cap 个），返回条数。
+// **只列出该时段出诊且有余号的医生** —— 推荐一个约不上的医生等于没推荐。
+// 只按「评分 + 职称」排序，不看号源 —— 用在还没选定时段的地方（比如导诊结果）。
+// 权重仍按 50/30，归一化到这两项之和 80%，保证分数可比。
+inline int rankQuality(const Hospital& h, int dept, int* out, int cap) {
+  if (cap <= 0) return 0;
+  int cnt = 0;
+  for (int i = 0; i < h.doctors.size(); ++i) {
+    if (h.doctors[i].dept != dept) continue;
+    const Doctor& d = h.doctors[i];
+    const int avg10 = Rating::average10(d);
+    const int rating = (avg10 < 0) ? 60 : (avg10 * 2);
+    const int sc = (rating * 50 + titleScore(d.title) * 30) / 80;  // 0..100
+
+    int k = cnt;
+    while (k > 0 && rankQualityScore(h, out[k - 1]) < sc) {
+      out[k] = out[k - 1];
+      --k;
+    }
+    out[k] = i;
+    if (cnt < cap) ++cnt;
+  }
+  return cnt;
+}
+
+inline int rank(const Hospital& h, int dept, int day, int slot, int* out, int cap) {
+  if (cap <= 0) return 0;
+  int cnt = 0;
+  for (int i = 0; i < h.doctors.size(); ++i) {
+    if (h.doctors[i].dept != dept) continue;
+    if (!h.hasSchedule(i, day, slot)) continue;
+    const ScheduleSlot& s = h.doctors[i].schedule.slot(day, slot);
+    if (s.stopped || s.quota - s.booked <= 0) continue;  // 停诊或已满
+    const int sc = score(h, i, day, slot);
+
+    // 插入排序：按推荐分从大到小，同分按下标（保证次序稳定）
+    int k = cnt;
+    while (k > 0 && score(h, out[k - 1], day, slot) < sc) {
+      out[k] = out[k - 1];
+      --k;
+    }
+    out[k] = i;
+    if (cnt < cap) ++cnt;
+  }
+  return cnt;
+}
+
+}  // namespace DoctorRank
+
+// =============================================================================
+//  扩展 2 的后半句：换班
+//
+//  停诊是「这个时段没号了」，换班是「这个时段还是这些号，但换成另一位医生看」。
+//  所以换班不能像停诊那样取消预约 —— 号源要**带着预约一起转移**：
+//      · 原时段的 booked 清零，预约记录的 doctor 改成新医生
+//      · 新时段的 booked 增加相应数量
+//  患者那边什么都不用改，到院还是那个时间、那个诊室，只是医生换了。
+// =============================================================================
+namespace Shift {
+
+enum Result {
+  SHIFT_OK = 0,
+  SHIFT_NO_SLOT = -1,     // 原时段没排班
+  SHIFT_BAD_TARGET = -2,  // 目标时段没排班/停诊/不存在
+  SHIFT_SAME = -3,        // 换给同一个人
+  SHIFT_NO_ROOM = -4,     // 目标时段余号不够放下这些预约
+};
+
+inline const char* resultText(int r) {
+  switch (r) {
+    case SHIFT_OK: return "换班成功";
+    case SHIFT_NO_SLOT: return "原时段没有排班";
+    case SHIFT_BAD_TARGET: return "目标医生在该时段没有出诊（或已停诊）";
+    case SHIFT_SAME: return "原医生与目标医生是同一个人";
+    case SHIFT_NO_ROOM: return "目标时段余号不足以接收这些预约";
+    default: return "未知错误";
+  }
+}
+
+struct ShiftResult {
+  int result = SHIFT_NO_SLOT;
+  int moved = 0;  // 转移过去的预约条数
+};
+
+// 把 (fromDoctor, day, slot) 的坐诊医生换成 toDoctor。
+inline ShiftResult transfer(Hospital& h, int fromDoctor, int day, int slot, int toDoctor) {
+  ShiftResult r;
+  if (!h.hasSchedule(fromDoctor, day, slot)) return r;
+  if (fromDoctor == toDoctor) {
+    r.result = SHIFT_SAME;
+    return r;
+  }
+  if (!h.hasSchedule(toDoctor, day, slot)) {
+    r.result = SHIFT_BAD_TARGET;
+    return r;
+  }
+
+  shared::Lock lock;
+
+  ScheduleSlot& from = h.slot(fromDoctor, day, slot);
+  ScheduleSlot& to = h.slot(toDoctor, day, slot);
+  if (to.stopped) {
+    r.result = SHIFT_BAD_TARGET;
+    return r;
+  }
+
+  // 数一数要带过去几条预约
+  int count = 0;
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.doctor == fromDoctor && b.day == day && b.slot == slot && b.status == BOOKED) ++count;
+  }
+  if (to.quota - to.booked < count) {
+    r.result = SHIFT_NO_ROOM;
+    return r;
+  }
+
+  // 转移：预约记录的医生改掉
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    Booking& b = h.bookings[i];
+    if (b.doctor == fromDoctor && b.day == day && b.slot == slot && b.status == BOOKED) {
+      b.doctor = toDoctor;
+      shared::logOp(shared::OP_SHIFT, b.patient, toDoctor, 0);
+    }
+  }
+
+  // 号源跟着走：原时段清空，新时段加上
+  to.booked += count;
+  from.booked = 0;
+  to.version = ++h.versionClock;
+  from.version = ++h.versionClock;
+
+  shared::logOp(shared::OP_SHIFT, -1, toDoctor, count);
+  shared::bump();
+
+  r.result = SHIFT_OK;
+  r.moved = count;
+  return r;
+}
+
+}  // namespace Shift
+
+// =============================================================================
 //  扩展 2：停诊 / 换班通知
 //
 //  「通知」在本系统里的落地方式：把该时段已预约的记录状态改成 STOPPED_CANCEL，

@@ -365,6 +365,10 @@ void MainWindow::updateStatusSummary() {
     } else {
       mode = QStringLiteral("[单进程] ");
     }
+    // 患者端显示"我是谁"，避免操作了半天不知道以谁的身份在点
+    if (state().loggedIn && state().patient >= 0 && state().patient < db().patients.size()) {
+      mode = QStringLiteral("[%1] ").arg(patientLabel(db(), state().patient)) + mode;
+    }
     statusData_->setText(mode + QStringLiteral("科室 %1 · 症状 %2（关联 %3） · 医生 %4 · 患者 %5 · 房间 %6")
                              .arg(h.depts.size())
                              .arg(h.symptomGraph.symptomCount())

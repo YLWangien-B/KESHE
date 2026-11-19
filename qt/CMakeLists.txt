@@ -52,6 +52,8 @@ set(APP_SOURCES
     src/qt_common.h
     src/qt_state.cpp
     src/qt_state.h
+    src/login_dialog.cpp
+    src/login_dialog.h
     src/qt_role.cpp
     src/qt_role.h
     src/qt_widgets.cpp

@@ -50,8 +50,13 @@ struct QtState {
   // 当前数据目录（支持用命令行参数换一套数据）
   char dataDir[128] = "data";
 
+  // 登录状态（患者端专有）
+  // 患者端必须先登录才能用：登录后 patient 就是「我是谁」，
+  // 各页面不再允许切换成别人（见 page_booking / page_manage / page_queue）。
+  bool loggedIn = false;
+
   // 跨页面共享的选择
-  int patient = 0;  // 预约 / 预约管理 / 候诊队列共用
+  int patient = 0;  // 当前患者（患者端=登录身份；管理端=正在查看的患者）
   int doctor = 0;   // 预约 / 排班 / 候诊队列共用
   int day = 0;      // 0..6
   int slot = 0;     // 0 上午 / 1 下午

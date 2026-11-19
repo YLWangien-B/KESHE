@@ -360,6 +360,7 @@ const char* opName(int op) {
     case OP_RESCHEDULE: return "停诊自动改约";
     case OP_ADD_PATIENT: return "登记患者";
     case OP_ADD_DOCTOR: return "登记医生";
+    case OP_SHIFT: return "换班";
     default: return "其他";
   }
 }

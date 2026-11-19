@@ -12,6 +12,9 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 #include <QMessageBox>
 #include <QPushButton>
 
@@ -62,15 +65,21 @@ SchedulePage::SchedulePage(QWidget* parent) : PageBase(parent) {
   resumeBtn_ = new QPushButton(QStringLiteral("恢复出诊"), this);
   resumeBtn_->setEnabled(false);
   adminRow->addWidget(resumeBtn_);
+  shiftBtn_ = new QPushButton(QStringLiteral("换班…"), this);
+  shiftBtn_->setEnabled(false);
+  shiftBtn_->setToolTip(QStringLiteral("把该时段的坐诊医生换成另一位；号源带着已有预约一起转移"));
+  adminRow->addWidget(shiftBtn_);
   layout->addLayout(adminRow);
   // 患者端没有这两个按钮
   const bool adminVisible = isAdmin();
   stopBtn_->setVisible(adminVisible);
   resumeBtn_->setVisible(adminVisible);
+  shiftBtn_->setVisible(adminVisible);
   selLabel_->setVisible(adminVisible);
 
   connect(stopBtn_, &QPushButton::clicked, this, &SchedulePage::onStopClicked);
   connect(resumeBtn_, &QPushButton::clicked, this, &SchedulePage::onResumeClicked);
+  connect(shiftBtn_, &QPushButton::clicked, this, &SchedulePage::onShiftClicked);
 
   // ---- 两张表放在 QStackedWidget 里，按视角切换 ----
   views_ = new QStackedWidget(this);
@@ -382,6 +391,72 @@ void SchedulePage::onStopClicked() {
   }
 
   // 刷新界面
+  onModeChanged(modeCombo_->currentIndex());
+}
+
+// 换班：把选中的时段换成另一位医生。号源带着已有预约一起转移，患者什么都不用改。
+void SchedulePage::onShiftClicked() {
+  Hospital& h = db();
+  if (selDoctor_ < 0) return;
+
+  const int from = selDoctor_;
+  const int dept = h.doctors[from].dept;
+
+  // 目标医生：本时段有排班、且不是原医生。先列同科室的，再列全部。
+  QVector<int> cand;
+  for (int i = 0; i < h.doctors.size(); ++i) {
+    if (i == from) continue;
+    if (h.doctors[i].dept != dept) continue;
+    if (!h.hasSchedule(i, selDay_, selSlot_)) continue;
+    cand.append(i);
+  }
+  for (int i = 0; i < h.doctors.size(); ++i) {
+    if (i == from) continue;
+    if (h.doctors[i].dept == dept) continue;
+    if (!h.hasSchedule(i, selDay_, selSlot_)) continue;
+    cand.append(i);
+  }
+  if (cand.isEmpty()) {
+    notifier().warn(QStringLiteral("该时段没有其它可换的医生（同科室其它医生此刻也不出诊）"));
+    return;
+  }
+
+  QDialog dlg(this);
+  dlg.setWindowTitle(QStringLiteral("换班"));
+  auto* form = new QFormLayout(&dlg);
+  form->addRow(new QLabel(QStringLiteral("当前：%1 · %2%3")
+                              .arg(doctorName(h, from), dayText(selDay_), slotText(selSlot_)),
+                          &dlg));
+  auto* combo = new QComboBox(&dlg);
+  for (int c : cand) {
+    const int left = h.remaining(c, selDay_, selSlot_);
+    combo->addItem(QStringLiteral("%1 %2（%3 · 余号 %4）")
+                       .arg(QString::fromUtf8(h.doctors[c].code),
+                            QString::fromUtf8(h.doctors[c].name), deptName(h, h.doctors[c].dept))
+                       .arg(left),
+                   c);
+  }
+  form->addRow(QStringLiteral("换成："), combo);
+  const int booked = h.slot(from, selDay_, selSlot_).booked;
+  form->addRow(new QLabel(QStringLiteral("该时段现有 %1 条预约，会一起转给新医生。")
+                              .arg(booked),
+                          &dlg));
+  auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+  form->addRow(box);
+  connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+  connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  const int to = combo->currentData().toInt();
+  const Shift::ShiftResult r = Shift::transfer(h, from, selDay_, selSlot_, to);
+  if (r.result != Shift::SHIFT_OK) {
+    notifier().error(QString::fromUtf8(Shift::resultText(r.result)));
+    return;
+  }
+  notifier().ok(QStringLiteral("换班完成：%1%2 由 %3 改为 %4，%5 条预约已随之转移")
+                    .arg(dayText(selDay_), slotText(selSlot_), doctorName(h, from),
+                         doctorName(h, to))
+                    .arg(r.moved));
   onModeChanged(modeCombo_->currentIndex());
 }
 

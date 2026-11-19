@@ -107,6 +107,12 @@ void BookingPage::refreshPage() {
     patientCombo_->setCurrentIndex(want);
     st.patient = want;
   }
+  // 患者端已登录：身份固定，不允许改成别人
+  if (st.loggedIn) {
+    patientCombo_->setCurrentIndex(st.patient);
+    patientCombo_->setEnabled(false);
+    patientCombo_->setToolTip(QStringLiteral("当前登录患者（不可切换）"));
+  }
 
   // 科室筛选（-1 = 全部）
   {
@@ -346,6 +352,27 @@ void BookingPage::updateSlotInfo() {
                 .arg(stateText);
     bookBtn_->setEnabled(ss != SLOT_FULL);
     if (ss == SLOT_FULL) info += QStringLiteral("<br><span style='color:#b04a4a;'>号已满，无法预约</span>");
+  }
+
+  // ---- 扩展要求第 3 条：推荐医生时参考评分 ----
+  // 综合分 = 评分 50% + 职称 30% + 该时段余号 20%（见 DoctorRank::score）
+  {
+    int ranked[4];
+    const int n = DoctorRank::rank(h, h.doctors[doctor].dept, st.day, st.slot, ranked, 4);
+    if (n > 0) {
+      info += QStringLiteral("<hr><b>该时段推荐医生</b>（评分+职称+余号综合）<br>");
+      for (int i = 0; i < n; ++i) {
+        const int doc = ranked[i];
+        char rankText[64];
+        Rating::text(h.doctors[doc], rankText, sizeof(rankText));
+        info += QStringLiteral("%1. %2 %3（%4 · %5）综合分 %6<br>")
+                    .arg(i + 1)
+                    .arg(QString::fromUtf8(h.doctors[doc].name),
+                         QString::fromUtf8(h.doctors[doc].title), QString::fromUtf8(rankText),
+                         roomName(h, h.doctors[doc].room))
+                    .arg(DoctorRank::score(h, doc, st.day, st.slot));
+      }
+    }
   }
 
   // ---- 扩展要求第 4 条：科室号源紧张时推荐相近科室 ----

@@ -24,6 +24,7 @@
 #include "shared_db.h"
 #include "model.h"
 #include "qt_app.h"
+#include "login_dialog.h"
 #include "qt_role.h"
 #include "qt_state.h"
 
@@ -158,6 +159,20 @@ int main(int argc, char** argv) {
                 Loader::overflowCount());
   } else if (Loader::errorCount() > 0) {
     std::printf("（有 %d 行数据未通过校验，已跳过）\n", Loader::errorCount());
+  }
+
+  // ---- 患者端：先用姓名登录（注册由医院在管理端完成，客户端不提供注册入口）----
+  if (!qt::isAdmin()) {
+    if (shootMode) {
+      // 截图模式不需要交互登录：直接以第一位患者身份进入
+      qt::state().patient = 0;
+      qt::state().loggedIn = true;
+    } else if (!qt::LoginDialog::runLogin(nullptr)) {
+      std::printf("[登录] 用户取消登录，退出。\n");
+      return 0;
+    }
+    if (!shootMode)
+      std::printf("[登录] 患者下标 %d 登录成功\n", qt::state().patient);
   }
 
   // ---- 主窗口 ----

@@ -15,6 +15,7 @@
 #include <QVBoxLayout>
 
 #include "qt_common.h"
+#include "service_extra.h"
 
 namespace qt {
 
@@ -175,24 +176,20 @@ void TriagePage::onRunTriage() {
   resultTable_->setRowCount(lastResult_.count);
   for (int r = 0; r < lastResult_.count; ++r) {
     const TriageItem& it = lastResult_.items[r];
-    // 该科室的医生（按评分从高到低，最多列 3 位）
-    QVector<int> docs;
-    for (int i = 0; i < h.doctors.size(); ++i)
-      if (h.doctors[i].dept == it.dept) docs.append(i);
-    std::sort(docs.begin(), docs.end(), [&h](int a, int b) {
-      const double ra = h.doctors[a].rankCount > 0
-                            ? static_cast<double>(h.doctors[a].rankSum) / h.doctors[a].rankCount
-                            : 0.0;
-      const double rb = h.doctors[b].rankCount > 0
-                            ? static_cast<double>(h.doctors[b].rankSum) / h.doctors[b].rankCount
-                            : 0.0;
-      if (ra != rb) return ra > rb;
-      return a < b;  // 同分按下标，保证次序稳定
-    });
+    // 该科室的医生：按「患者评分 50% + 职称 30%」排序（扩展要求第 3 条：
+    // 科室预约推荐时参考评分）。这里还没选定时段，所以不含「余号」这一项。
+    int ranked[8];
+    const int rankedCount = DoctorRank::rankQuality(h, it.dept, ranked, 8);
     QStringList docNames;
-    for (int k = 0; k < docs.size() && k < 3; ++k)
-      docNames << QString::fromUtf8(h.doctors[docs[k]].name);
+    for (int k = 0; k < rankedCount && k < 3; ++k) {
+      char rankText[64];
+      Rating::text(h.doctors[ranked[k]], rankText, sizeof(rankText));
+      docNames << QStringLiteral("%1（%2）")
+                      .arg(QString::fromUtf8(h.doctors[ranked[k]].name),
+                           QString::fromUtf8(rankText));
+    }
 
+    if (docNames.isEmpty()) docNames << QStringLiteral("（暂无出诊医生）");
     const QStringList cells = {
         QString::number(r + 1),
         deptName(h, it.dept),
