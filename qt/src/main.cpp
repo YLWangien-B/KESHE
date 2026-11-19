@@ -164,7 +164,18 @@ int main(int argc, char** argv) {
   // ---- 患者端：先用姓名登录（注册由医院在管理端完成，客户端不提供注册入口）----
   if (!qt::isAdmin()) {
     if (shootMode) {
-      // 截图模式不需要交互登录：直接以第一位患者身份进入
+      // 截图模式：先把登录框渲染成一张图（说明书要用），再自动登录
+      const QString shotDir = QCoreApplication::applicationDirPath() + QStringLiteral("/manual_shots");
+      QDir().mkpath(shotDir);
+      {
+        qt::LoginDialog dlg(nullptr);
+        dlg.show();
+        QApplication::processEvents();
+        QApplication::processEvents();
+        const bool ok = dlg.grab().save(shotDir + QStringLiteral("/login.png"));
+        std::printf("[shot] 登录框 -> %s\n", ok ? "ok" : "FAILED");
+        dlg.close();
+      }
       qt::state().patient = 0;
       qt::state().loggedIn = true;
     } else if (!qt::LoginDialog::runLogin(nullptr)) {
@@ -186,7 +197,7 @@ int main(int argc, char** argv) {
   // 为什么需要它：GUI 的自动化验证很容易被「窗口抢不到焦点」卡住，
   // 用 QWidget::grab() 直接渲染就绕开了这个问题，而且产物可以直接放文档里。
   if (shootMode) {
-    const QString outDir = QCoreApplication::applicationDirPath() + QStringLiteral("/qt_shots");
+    const QString outDir = QCoreApplication::applicationDirPath() + QStringLiteral("/manual_shots");
     QDir().mkpath(outDir);
     int shot = 0;
     for (int page = 0; page < qt::PAGE_COUNT; ++page) {
