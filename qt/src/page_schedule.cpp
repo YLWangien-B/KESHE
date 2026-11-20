@@ -314,6 +314,9 @@ void SchedulePage::onCellActivated(int row, int col) {
     const bool assigned = (ss != SLOT_NONE);
     stopBtn_->setEnabled(assigned && ss != SLOT_STOPPED);
     resumeBtn_->setEnabled(assigned && ss == SLOT_STOPPED);
+    // 换班：只有「该时段正常出诊」才有意义 —— 不出诊没有人可换，
+    // 已停诊的时段应该先恢复出诊再换班。
+    shiftBtn_->setEnabled(assigned && ss != SLOT_STOPPED);
     selLabel_->setText(QStringLiteral("已选中：%1 · %2%3%4")
                            .arg(doctorName(h, doctor), dayText(day), slotText(slot),
                                 ss == SLOT_STOPPED ? QStringLiteral("（当前已停诊）")
