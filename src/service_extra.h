@@ -645,6 +645,9 @@ inline Report check(const Hospital& h) {
   for (int d = 0; d < h.doctors.size(); ++d) {
     for (int day = 0; day < kMaxDay; ++day) {
       for (int s = 0; s < 2; ++s) {
+        // 未排班的时段不参与核对 —— 那些格子的数据本来就没有意义，
+        // 拿它们比 booked 会误报「负余号」。
+        if (!h.hasSchedule(d, day, s)) continue;
         const ScheduleSlot& slot = h.doctors[d].schedule.slot(day, s);
         if (slot.booked < 0) {
           ++r.negativeBooked;

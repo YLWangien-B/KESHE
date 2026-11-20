@@ -374,12 +374,12 @@ void BookingPage::updateSlotInfo() {
       info += QStringLiteral("<hr><b>该时段推荐医生</b>（评分+职称+余号综合）<br>");
       for (int i = 0; i < n; ++i) {
         const int doc = ranked[i];
-        char rankText[64];
-        Rating::text(h.doctors[doc], rankText, sizeof(rankText));
+        char recRank[64];  // 别叫 rankText：外层已经有一个同名变量
+        Rating::text(h.doctors[doc], recRank, sizeof(recRank));
         info += QStringLiteral("%1. %2 %3（%4 · %5）综合分 %6<br>")
                     .arg(i + 1)
                     .arg(QString::fromUtf8(h.doctors[doc].name),
-                         QString::fromUtf8(h.doctors[doc].title), QString::fromUtf8(rankText),
+                         QString::fromUtf8(h.doctors[doc].title), QString::fromUtf8(recRank),
                          roomName(h, h.doctors[doc].room))
                     .arg(DoctorRank::score(h, doc, st.day, st.slot));
       }

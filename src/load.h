@@ -188,6 +188,7 @@ class Loader {
       }
 
       Department d;
+      std::memset(&d, 0, sizeof(d));  // 见下方说明
       std::snprintf(d.code, sizeof(d.code), "%s", fields[0]);
       std::snprintf(d.name, sizeof(d.name), "%s", fields[1]);
       std::snprintf(d.location, sizeof(d.location), "%s", fields[2]);
@@ -235,7 +236,13 @@ class Loader {
 
   // ------------------------------ 医生表 ------------------------------
   // 行格式：编号|姓名|科室编号|职称|擅长领域|房间编号
-  static bool loadDoctors() {
+  // 注意：这里用 memset 而不是 `Doctor d{}` 清零。
+// 原因是 Doctor / Department 这些结构体的成员（SeqList、ScheduleTable 等）
+// 有自己的构造函数，`{}` 只会调用这些构造函数，**不会清零其余成员**，
+// 于是 ScheduleTable 里未排班的槽位会带上栈上的垃圾值 ——
+// 表现为「未排班时段的 booked/quota 是随机数」，数据自检会误报负余号。
+// 结构体都是 trivially copyable，所以 memset 是安全且彻底的。
+static bool loadDoctors() {
     Hospital& h = hospital();
     if (!openFile("doctors.txt")) return false;
     char line[512];
@@ -247,6 +254,7 @@ class Loader {
         continue;
       }
       Doctor d;
+      std::memset(&d, 0, sizeof(d));  // 见下方说明
       std::snprintf(d.code, sizeof(d.code), "%s", fields[0]);
       std::snprintf(d.name, sizeof(d.name), "%s", fields[1]);
       std::snprintf(d.title, sizeof(d.title), "%s", fields[3]);
@@ -323,6 +331,7 @@ class Loader {
         continue;
       }
       Patient p;
+      std::memset(&p, 0, sizeof(p));
       std::snprintf(p.code, sizeof(p.code), "%s", fields[0]);
       std::snprintf(p.name, sizeof(p.name), "%s", fields[1]);
       std::snprintf(p.phone, sizeof(p.phone), "%s", fields[2]);
@@ -356,6 +365,7 @@ class Loader {
         continue;
       }
       Room r;
+      std::memset(&r, 0, sizeof(r));
       std::snprintf(r.code, sizeof(r.code), "%s", fields[0]);
       std::snprintf(r.name, sizeof(r.name), "%s", fields[1]);
       r.floor = std::atoi(fields[2]);

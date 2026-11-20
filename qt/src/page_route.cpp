@@ -123,7 +123,6 @@ RoutePage::RoutePage(QWidget* parent) : PageBase(parent) {
 }
 
 void RoutePage::refreshPage() {
-  Hospital& h = db();
   QtState& st = state();
 
   fillRoomCombos();
