@@ -82,6 +82,10 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   connect(cancelBtn_, &QPushButton::clicked, this, &ManagePage::onCancelClicked);
   connect(table_, &QTableWidget::itemSelectionChanged, this,
           &ManagePage::onTableSelectionChanged);
+  // 双击一行也能评价 —— 按钮万一没反应（比如状态没刷新），这条路仍然通
+  connect(table_, &QTableWidget::cellDoubleClicked, this, [this](int, int) {
+    if (rateBtn_->isEnabled()) onRateClicked();
+  });
   connect(rateBtn_, &QPushButton::clicked, this, &ManagePage::onRateClicked);
 }
 
@@ -198,6 +202,8 @@ void ManagePage::onTableSelectionChanged() {
   const int row = table_->currentRow();
   if (row < 0) {
     cancelBtn_->setEnabled(false);
+    rateBtn_->setEnabled(false);   // 没有选中行时评价按钮也必须禁用，
+                                   // 否则会留着上一次的可用状态，点了却没反应
     return;
   }
   QTableWidgetItem* item = table_->item(row, 0);
@@ -315,16 +321,38 @@ bool ManagePage::cancelBooking(int patient, const QString& ticket) {
 void ManagePage::onRateClicked() {
   Hospital& h = db();
   const int row = table_->currentRow();
-  if (row < 0) return;
+  if (row < 0) {
+    notifier().warn(QStringLiteral("请先在表格里选中一条记录，再点「评价选中的就诊」"));
+    return;
+  }
 
   QTableWidgetItem* ticketItem = table_->item(row, 0);
-  QTableWidgetItem* idxItem = table_->item(row, 0);
-  if (!ticketItem || !idxItem) return;
+  if (ticketItem == nullptr) {
+    notifier().warn(QStringLiteral("这一行没有数据，请重新选择"));
+    return;
+  }
 
   // 第 0 列里用 UserRole 记了预约在 h.bookings 里的下标
-  const int bookingIndex = idxItem->data(Qt::UserRole).toInt();
-  if (bookingIndex < 0 || bookingIndex >= h.bookings.size()) return;
+  const int bookingIndex = ticketItem->data(Qt::UserRole).toInt();
+  if (bookingIndex < 0 || bookingIndex >= h.bookings.size()) {
+    notifier().error(QStringLiteral("内部错误：这一行没有关联到预约记录（下标 %1）")
+                         .arg(bookingIndex));
+    return;
+  }
+
+  // 点之前自己再判一次，别指望按钮状态一定是准的
   const Booking& bk = h.bookings[bookingIndex];
+  if (bk.status != FINISHED) {
+    notifier().warn(QStringLiteral("「%1」还不是「已完成」状态，暂时不能评价。\n"
+                                   "需要医生在管理端「候诊队列」里点「就诊完成」。")
+                        .arg(QString::fromUtf8(bk.ticket)));
+    return;
+  }
+  if (bk.rated != 0) {
+    notifier().info(QStringLiteral("「%1」已经评价过了，同一次就诊只能评一次")
+                        .arg(QString::fromUtf8(bk.ticket)));
+    return;
+  }
   const QString doctorText = QString::fromUtf8(h.doctors[bk.doctor].name) +
                              QStringLiteral("（") +
                              QString::fromUtf8(h.doctors[bk.doctor].title) + QStringLiteral("）");
