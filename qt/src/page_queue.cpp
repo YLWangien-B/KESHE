@@ -1,9 +1,16 @@
 ﻿/* =============================================================================
- *  page_queue.cpp  —  候诊队列页
+ *  page_queue.cpp  —  候诊队列
+ *
+ *  队列用环形队列实现，四个动作全部走 service_queue.h 的 Queue 类。
+ *
+ *  两端界面不同（见 page_queue.h 的说明）：
+ *    管理端 = 完整队列管理（选患者、选医生、签到、叫号、过号、完成）
+ *    患者端 = 「我的候诊」卡片（只看自己的预约与排队状态，只有一个签到按钮）
  * ========================================================================== */
 #include "page_queue.h"
 
 #include <QComboBox>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -11,83 +18,149 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-#include "service_queue.h"
 #include "qt_common.h"
 #include "qt_role.h"
+#include "service_queue.h"
 
 namespace qt {
 
+namespace {
+// 在该医生的队伍里找患者的排队记录；找不到返回 nullptr
+const Waiting* findWaiting(const Hospital& h, int patient, int doctor) {
+  for (int i = 0; i < h.waiting.size(); ++i) {
+    const Waiting& w = h.waiting.at(i);
+    if (w.patient == patient && w.doctor == doctor) return &w;
+  }
+  return nullptr;
+}
+}  // namespace
+
+// =============================================================================
+//  构造
+// =============================================================================
 QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
   layout->addWidget(makePageTitle(QStringLiteral("功能 7  候诊队列")));
-  layout->addWidget(makeHint(QStringLiteral(
-      "队列用<b>环形队列</b>实现，入队出队都是 O(1)，出队腾出的位置给后来的患者循环使用。"
-      "「先来先看」由 Queue::callNext 守住：队首已被叫号就不许越过他去叫后面的人；"
-      "过号记满 2 次重新排到队尾。")));
 
-  // ---- 操作行 ----
-  auto* row = new QHBoxLayout();
-  row->addWidget(new QLabel(QStringLiteral("患者："), this));
-  patientCombo_ = new QComboBox(this);
-  patientCombo_->setMinimumWidth(180);
-  row->addWidget(patientCombo_);
-
-  row->addWidget(new QLabel(QStringLiteral("医生："), this));
-  doctorCombo_ = new QComboBox(this);
-  doctorCombo_->setMinimumWidth(240);
-  row->addWidget(doctorCombo_);
-
-  auto* inBtn = new QPushButton(QStringLiteral("患者签到排队"), this);
-  inBtn->setDefault(true);
-  row->addWidget(inBtn);
-
-  // 叫号 / 过号 / 就诊完成是**医生的操作**，只有管理端该出现。
-  // 患者端只要能签到、能看自己前面还有几个人就够了 ——
-  // 让患者能替医生叫号既不合逻辑，也容易误操作。
-  QPushButton* callBtn = nullptr;
-  QPushButton* passBtn = nullptr;
-  QPushButton* finishBtn = nullptr;
   if (isAdmin()) {
-    callBtn = new QPushButton(QStringLiteral("叫下一位"), this);
+    // ---------------------------------------------------------------------
+    //  管理端：完整队列管理
+    // ---------------------------------------------------------------------
+    layout->addWidget(makeHint(QStringLiteral(
+        "队列用<b>环形队列</b>实现，入队出队都是 O(1)，出队腾出的位置给后来的患者循环使用。"
+        "「先来先看」由 Queue::callNext 守住：队首已被叫号就不许越过他去叫后面的人；"
+        "过号记满 2 次重新排到队尾。")));
+
+    auto* row = new QHBoxLayout();
+    row->addWidget(new QLabel(QStringLiteral("患者："), this));
+    patientCombo_ = new QComboBox(this);
+    patientCombo_->setMinimumWidth(180);
+    row->addWidget(patientCombo_);
+
+    row->addWidget(new QLabel(QStringLiteral("医生："), this));
+    doctorCombo_ = new QComboBox(this);
+    doctorCombo_->setMinimumWidth(240);
+    row->addWidget(doctorCombo_);
+
+    auto* inBtn = new QPushButton(QStringLiteral("患者签到排队"), this);
+    inBtn->setDefault(true);
+    row->addWidget(inBtn);
+    auto* callBtn = new QPushButton(QStringLiteral("叫下一位"), this);
     row->addWidget(callBtn);
-    passBtn = new QPushButton(QStringLiteral("过号处理"), this);
+    auto* passBtn = new QPushButton(QStringLiteral("过号处理"), this);
     row->addWidget(passBtn);
-    finishBtn = new QPushButton(QStringLiteral("就诊完成"), this);
+    auto* finishBtn = new QPushButton(QStringLiteral("就诊完成"), this);
     row->addWidget(finishBtn);
+
+    row->addStretch(1);
+    summary_ = makeHint(QString());
+    row->addWidget(summary_);
+    layout->addLayout(row);
+
+    table_ = new QTableWidget(this);
+    setupReadOnlyTable(table_, 0, 6,
+                       {QStringLiteral("排队号"), QStringLiteral("患者"), QStringLiteral("状态"),
+                        QStringLiteral("已叫号"), QStringLiteral("前面还有"),
+                        QStringLiteral("排到次序")});
+    table_->setColumnWidth(0, 80);
+    table_->setColumnWidth(1, 160);
+    table_->setColumnWidth(2, 200);
+    table_->setColumnWidth(3, 90);
+    table_->setColumnWidth(4, 100);
+    table_->setColumnWidth(5, 100);
+    layout->addWidget(table_, 1);
+
+    connect(inBtn, &QPushButton::clicked, this, &QueuePage::onCheckIn);
+    connect(callBtn, &QPushButton::clicked, this, &QueuePage::onCallNext);
+    connect(passBtn, &QPushButton::clicked, this, &QueuePage::onPass);
+    connect(finishBtn, &QPushButton::clicked, this, &QueuePage::onFinish);
+    connect(doctorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            &QueuePage::onDoctorChanged);
+    return;
   }
 
-  row->addStretch(1);
-  summary_ = makeHint(QString());
-  row->addWidget(summary_);
-  layout->addLayout(row);
+  // -------------------------------------------------------------------------
+  //  患者端：只有「我的候诊」卡片
+  // -------------------------------------------------------------------------
+  layout->addWidget(makeHint(QStringLiteral(
+      "到院后选中下面的一条预约，点「<b>签到排队</b>」即可进入候诊队列。"
+      "排队号、前面还有几人、有没有叫到你，这里会实时显示。"
+      "叫号与就诊由医生在诊室操作。")));
 
-  // ---- 队列表格 ----
-  table_ = new QTableWidget(this);
-  setupReadOnlyTable(table_, 0, 6,
-                     {QStringLiteral("排队号"), QStringLiteral("患者"), QStringLiteral("状态"),
-                      QStringLiteral("已叫号"), QStringLiteral("前面还有"), QStringLiteral("排到次序")});
-  table_->setColumnWidth(0, 80);
-  table_->setColumnWidth(1, 160);
-  table_->setColumnWidth(2, 200);
-  table_->setColumnWidth(3, 90);
-  table_->setColumnWidth(4, 100);
-  table_->setColumnWidth(5, 100);
-  layout->addWidget(table_, 1);
+  // ---- 卡片 1：我的预约 ----
+  auto* myBox = new QGroupBox(QStringLiteral("我的预约"), this);
+  auto* myLayout = new QVBoxLayout(myBox);
+  myTable_ = new QTableWidget(myBox);
+  setupReadOnlyTable(myTable_, 0, 5,
+                     {QStringLiteral("凭证号"), QStringLiteral("科室 / 医生"),
+                      QStringLiteral("就诊时间"), QStringLiteral("就诊地点"),
+                      QStringLiteral("排队状态")},
+                     false);
+  myTable_->setColumnWidth(0, 100);
+  myTable_->setColumnWidth(1, 240);
+  myTable_->setColumnWidth(2, 120);
+  myTable_->setColumnWidth(3, 260);
+  myTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
+  myLayout->addWidget(myTable_, 1);
 
-  connect(inBtn, &QPushButton::clicked, this, &QueuePage::onCheckIn);
-  if (callBtn) connect(callBtn, &QPushButton::clicked, this, &QueuePage::onCallNext);
-  if (passBtn) connect(passBtn, &QPushButton::clicked, this, &QueuePage::onPass);
-  if (finishBtn) connect(finishBtn, &QPushButton::clicked, this, &QueuePage::onFinish);
-  connect(doctorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          &QueuePage::onDoctorChanged);
+  auto* btnRow = new QHBoxLayout();
+  inBtn_ = new QPushButton(QStringLiteral("签到排队"), myBox);
+  inBtn_->setDefault(true);
+  inBtn_->setMinimumWidth(130);
+  btnRow->addWidget(inBtn_);
+  btnRow->addStretch(1);
+  myLayout->addLayout(btnRow);
+  layout->addWidget(myBox, 1);
+
+  // ---- 卡片 2：我的候诊状态 ----
+  auto* statusBox = new QGroupBox(QStringLiteral("我的候诊状态"), this);
+  auto* statusLayout = new QVBoxLayout(statusBox);
+  queueStatus_ = new QLabel(statusBox);
+  queueStatus_->setTextFormat(Qt::RichText);
+  queueStatus_->setWordWrap(true);
+  queueStatus_->setMinimumHeight(72);
+  queueStatus_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  statusLayout->addWidget(queueStatus_);
+  layout->addWidget(statusBox);
+
+  connect(inBtn_, &QPushButton::clicked, this, &QueuePage::onCheckIn);
+  connect(myTable_, &QTableWidget::cellClicked, this, &QueuePage::onMyBookingClicked);
 }
 
+// =============================================================================
+//  刷新
+// =============================================================================
 void QueuePage::refreshPage() {
+  if (!isAdmin()) {
+    fillMyBookings();
+    updateMyQueueStatus();
+    return;
+  }
+
   Hospital& h = db();
   QtState& st = state();
 
-  // 患者下拉框
   const int keepP = patientCombo_->currentIndex();
   {
     QSignalBlocker b(patientCombo_);
@@ -98,14 +171,7 @@ void QueuePage::refreshPage() {
     patientCombo_->setCurrentIndex(want);
     st.patient = want;
   }
-  // 患者端已登录：只能给自己签到
-  if (st.loggedIn) {
-    patientCombo_->setCurrentIndex(st.patient);
-    patientCombo_->setEnabled(false);
-    patientCombo_->setToolTip(QStringLiteral("当前登录患者（不可切换）"));
-  }
 
-  // 医生下拉框
   const int keepD = doctorCombo_->currentIndex();
   {
     QSignalBlocker b(doctorCombo_);
@@ -124,6 +190,9 @@ void QueuePage::refreshPage() {
   fillQueueTable();
 }
 
+// =============================================================================
+//  管理端：该医生的队伍
+// =============================================================================
 void QueuePage::onDoctorChanged(int index) {
   if (index >= 0) state().doctor = index;
   fillQueueTable();
@@ -134,7 +203,6 @@ void QueuePage::fillQueueTable() {
   const int doctor = doctorCombo_->currentIndex();
   if (doctor < 0) return;
 
-  // 只列该医生队伍里的人（按排队次序）
   QVector<int> order;
   for (int i = 0; i < h.waiting.size(); ++i)
     if (h.waiting.at(i).doctor == doctor) order.append(i);
@@ -179,11 +247,179 @@ void QueuePage::fillQueueTable() {
                         .arg(allWaiting));
 }
 
+// =============================================================================
+//  患者端：我的预约（含排队状态）
+// =============================================================================
+void QueuePage::fillMyBookings() {
+  Hospital& h = db();
+  const int patient = state().patient;
+  if (patient < 0 || patient >= h.patients.size()) {
+    myTable_->setRowCount(0);
+    return;
+  }
+
+  // 只列「已预约」和「已完成」的（取消/作废的不再出现在候诊视角里）
+  QVector<int> rows;
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient != patient) continue;
+    if (b.status != BOOKED && b.status != FINISHED) continue;
+    rows.append(i);
+  }
+
+  const int keepRow = myTable_->currentRow();
+  myTable_->setRowCount(rows.size());
+  for (int r = 0; r < rows.size(); ++r) {
+    const Booking& b = h.bookings[rows[r]];
+
+    QString queueText;
+    QColor queueColor(0x8A, 0x91, 0x99);
+    const Waiting* w = findWaiting(h, patient, b.doctor);
+    if (b.status == FINISHED) {
+      queueText = QStringLiteral("已完成");
+      queueColor = QColor(0x6E, 0xC8, 0x7E);
+    } else if (w != nullptr) {
+      if (w->calledCount == 0) {
+        queueText = QStringLiteral("已签到 · 排队号 %1 · 前面 %2 人")
+                        .arg(w->queueNo)
+                        .arg(Queue::waitingAhead(h, patient, b.doctor));
+        queueColor = QColor(0x6E, 0xC8, 0x7E);
+      } else {
+        queueText = QStringLiteral("已叫号 · 请进诊室（排队号 %1）").arg(w->queueNo);
+        queueColor = QColor(0xD8, 0xB0, 0x50);
+      }
+    } else {
+      queueText = QStringLiteral("未签到");
+    }
+
+    const QStringList cells = {
+        QString::fromUtf8(b.ticket),
+        QStringLiteral("%1 %2").arg(deptName(h, h.doctors[b.doctor].dept),
+                                    QString::fromUtf8(h.doctors[b.doctor].name)),
+        QStringLiteral("%1 %2").arg(dayText(b.day), slotText(b.slot)),
+        roomName(h, h.doctors[b.doctor].room),
+        queueText,
+    };
+    for (int c = 0; c < cells.size(); ++c) {
+      auto* item = new QTableWidgetItem(cells[c]);
+      if (c == 2 || c == 4) item->setTextAlignment(Qt::AlignCenter);
+      if (c == 4) item->setForeground(queueColor);
+      myTable_->setItem(r, c, item);
+    }
+  }
+  myTable_->resizeRowsToContents();
+  if (keepRow >= 0 && keepRow < myTable_->rowCount()) myTable_->selectRow(keepRow);
+}
+
+// 下方「我的候诊状态」卡片
+void QueuePage::updateMyQueueStatus() {
+  Hospital& h = db();
+  const int patient = state().patient;
+  const int row = myTable_->currentRow();
+  if (patient < 0 || row < 0) {
+    queueStatus_->setText(QStringLiteral(
+        "<span style='color:#8a9199;'>选中上面的一条预约，再点「签到排队」。</span>"));
+    inBtn_->setEnabled(false);
+    return;
+  }
+
+  // 表格里的行号和预约记录不是一回事，重新找一遍（和 fillMyBookings 同序）
+  QVector<int> rows;
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient != patient) continue;
+    if (b.status != BOOKED && b.status != FINISHED) continue;
+    rows.append(i);
+  }
+  if (row >= rows.size()) {
+    inBtn_->setEnabled(false);
+    return;
+  }
+
+  const Booking& b = h.bookings[rows[row]];
+  const Doctor& d = h.doctors[b.doctor];
+
+  if (b.status == FINISHED) {
+    queueStatus_->setText(QStringLiteral(
+        "<span style='color:#6ec87e;'>这次就诊已完成。</span><br>"
+        "可以到「预约管理」里给 %1 医生评价。")
+                              .arg(QString::fromUtf8(d.name)));
+    inBtn_->setEnabled(false);
+    return;
+  }
+
+  const Waiting* w = findWaiting(h, patient, b.doctor);
+  if (w == nullptr) {
+    queueStatus_->setText(
+        QStringLiteral("<b>还没签到。</b><br>%1 %2 · %3 %4<br>"
+                       "点「签到排队」进入 %5 的候诊队列。")
+            .arg(QString::fromUtf8(b.ticket), QStringLiteral("%1 %2")
+                                                  .arg(deptName(h, d.dept),
+                                                       QString::fromUtf8(d.name)),
+                 dayText(b.day), slotText(b.slot))
+            .arg(QString::fromUtf8(d.name)));
+    inBtn_->setEnabled(true);
+    return;
+  }
+
+  const int ahead = Queue::waitingAhead(h, patient, b.doctor);
+  const int pos = Queue::positionOf(h, patient, b.doctor);
+  if (w->calledCount == 0) {
+    queueStatus_->setText(
+        QStringLiteral("<span style='color:#6ec87e;'><b>已签到</b></span> · "
+                       "排队号 <b>%1</b> · 前面还有 <b>%2</b> 人（第 %3 位）<br>"
+                       "医生：%4 · %5<br>请在候诊区等候，叫到名字再进诊室。")
+            .arg(w->queueNo)
+            .arg(ahead)
+            .arg(pos)
+            .arg(QString::fromUtf8(d.name), roomName(h, d.room)));
+  } else {
+    queueStatus_->setText(
+        QStringLiteral("<span style='color:#d8b050;'><b>已经叫到你了！</b></span> · "
+                       "排队号 <b>%1</b>（第 %2 位）<br>"
+                       "请立刻到 %3 找 %4 医生。")
+            .arg(w->queueNo)
+            .arg(pos)
+            .arg(roomName(h, d.room), QString::fromUtf8(d.name)));
+  }
+  inBtn_->setEnabled(false);  // 已签到，不能再签一次
+}
+
+void QueuePage::onMyBookingClicked(int row, int) {
+  Q_UNUSED(row);
+  updateMyQueueStatus();
+}
+
+// =============================================================================
+//  签到（两端共用入口，患者端按选中的预约取医生）
+// =============================================================================
 void QueuePage::onCheckIn() {
   Hospital& h = db();
-  Q_UNUSED(h);
-  const int doctor = doctorCombo_->currentIndex();
-  const int patient = patientCombo_->currentIndex();
+
+  int patient = -1;
+  int doctor = -1;
+
+  if (isAdmin()) {
+    patient = patientCombo_->currentIndex();
+    doctor = doctorCombo_->currentIndex();
+  } else {
+    // 患者端：用当前选中的那条预约的医生
+    patient = state().patient;
+    const int row = myTable_->currentRow();
+    QVector<int> rows;
+    for (int i = 0; i < h.bookings.size(); ++i) {
+      const Booking& b = h.bookings[i];
+      if (b.patient != patient) continue;
+      if (b.status != BOOKED && b.status != FINISHED) continue;
+      rows.append(i);
+    }
+    if (row < 0 || row >= rows.size()) {
+      notifier().warn(QStringLiteral("请先在上面选中一条预约"));
+      return;
+    }
+    doctor = h.bookings[rows[row]].doctor;
+  }
+
   if (doctor < 0 || patient < 0) return;
 
   const QueueResult r = Queue::checkIn(db(), patient, doctor);
@@ -193,7 +429,6 @@ void QueuePage::onCheckIn() {
                         .arg(patientName(db(), patient), doctorName(db(), doctor))
                         .arg(Queue::queueNoOf(db(), patient, doctor))
                         .arg(Queue::waitingAhead(db(), patient, doctor)));
-      fillQueueTable();
       break;
     case QUEUE_DUP:
       notifier().warn(QStringLiteral("%1 已经在 %2 的队列里了（当前第 %3 位）")
@@ -207,8 +442,18 @@ void QueuePage::onCheckIn() {
       notifier().error(QStringLiteral("签到失败"));
       break;
   }
+
+  if (isAdmin())
+    fillQueueTable();
+  else {
+    fillMyBookings();
+    updateMyQueueStatus();
+  }
 }
 
+// =============================================================================
+//  管理端：叫号 / 过号 / 就诊完成
+// =============================================================================
 void QueuePage::onCallNext() {
   Hospital& h = db();
   const int doctor = doctorCombo_->currentIndex();
@@ -223,68 +468,58 @@ void QueuePage::onCallNext() {
       notifier().ok(QStringLiteral("叫号：%1 到 %2 就诊（排队号 %3）")
                         .arg(patientName(h, patient), doctorName(h, doctor))
                         .arg(Queue::queueNoOf(h, patient, doctor)));
-      fillQueueTable();
       break;
-    case QUEUE_FIRST_CALLED: {
-      // 队首已经被叫过还没处理完 —— 不能越过他叫后面的人
+    case QUEUE_FIRST_CALLED:
       notifier().warn(QStringLiteral("队首的人已被叫号还未处理完，不能越过他叫下一位。\n"
                                      "请先「过号处理」或「就诊完成」。"));
       break;
-    }
     case QUEUE_EMPTY:
-      notifier().info(QStringLiteral("%1 当前没有候诊患者").arg(doctorName(h, doctor)));
+      notifier().info(QStringLiteral("%1 的候诊队列为空").arg(doctorName(h, doctor)));
       break;
     default:
       notifier().error(QStringLiteral("叫号失败"));
       break;
   }
+  fillQueueTable();
 }
 
 void QueuePage::onPass() {
   Hospital& h = db();
   const int doctor = doctorCombo_->currentIndex();
-  int patient = lastCalledPatient_;
-  // 没叫过号就用当前选中的患者
-  if (patient < 0) patient = patientCombo_->currentIndex();
-  if (doctor < 0 || patient < 0) return;
-  if (!Queue::isWaiting(h, patient, doctor)) {
-    notifier().warn(QStringLiteral("%1 不在 %2 的队列里").arg(patientName(h, patient),
-                                                             doctorName(h, doctor)));
+  const int patient = lastCalledPatient_ >= 0 ? lastCalledPatient_
+                                              : patientCombo_->currentIndex();
+  if (doctor < 0 || patient < 0) {
+    notifier().warn(QStringLiteral("请先叫号，或在下拉框里选择要记过号的患者"));
     return;
   }
-
-  const bool requeued = Queue::pass(h, patient, doctor);
-  if (requeued) {
-    lastCalledPatient_ = -1;
-    notifier().warn(QStringLiteral("过号：%1 达 %2 次上限，已重新排到队尾（新排队号 %3）")
+  if (Queue::pass(h, patient, doctor))
+    notifier().info(QStringLiteral("%1 已过号 %2 次，重新排到队尾（新的排队号 %3）")
                         .arg(patientName(h, patient))
                         .arg(kMaxPass)
                         .arg(Queue::queueNoOf(h, patient, doctor)));
-  } else {
-    notifier().info(QStringLiteral("过号：%1 记一次（叫号次数达 %2 次会重新排队）")
+  else
+    notifier().warn(QStringLiteral("%1 记一次过号（还没到 %2 次）")
                         .arg(patientName(h, patient))
                         .arg(kMaxPass));
-  }
   fillQueueTable();
 }
 
 void QueuePage::onFinish() {
   Hospital& h = db();
   const int doctor = doctorCombo_->currentIndex();
-  int patient = lastCalledPatient_;
-  if (patient < 0) patient = patientCombo_->currentIndex();
+  const int patient = lastCalledPatient_ >= 0 ? lastCalledPatient_
+                                              : patientCombo_->currentIndex();
   if (doctor < 0 || patient < 0) return;
 
   const QueueResult r = Queue::finish(h, patient, doctor);
   if (r == QUEUE_OK) {
-    lastCalledPatient_ = -1;
-    notifier().ok(QStringLiteral("就诊完成：%1 已离开 %2 的队列")
+    notifier().ok(QStringLiteral("就诊完成：%1 已离开 %2 的队列，对应预约标记为「已完成」")
                       .arg(patientName(h, patient), doctorName(h, doctor)));
-    fillQueueTable();
+    lastCalledPatient_ = -1;
   } else {
-    notifier().warn(QStringLiteral("%1 不在 %2 的队列里").arg(patientName(h, patient),
-                                                             doctorName(h, doctor)));
+    notifier().warn(QStringLiteral("该患者不在 %1 的队列里").arg(doctorName(h, doctor)));
   }
+  fillQueueTable();
 }
 
 }  // namespace qt
