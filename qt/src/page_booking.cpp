@@ -129,6 +129,12 @@ void BookingPage::refreshPage() {
       deptFilterCombo_->setCurrentIndex(0);
   }
 
+  // 导诊页点「去预约该科室」跳过来时，预选该科室的筛选
+  if (st.jumpDept >= 0) {
+    deptFilterCombo_->setCurrentIndex(st.jumpDept + 1);  // +1：第 0 项是「全部科室」
+    st.jumpDept = -1;
+  }
+
   // 排班页点格子跳过来时，预填医生与时段
   if (st.jumpToBooking) {
     st.jumpToBooking = false;

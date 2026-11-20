@@ -9,6 +9,7 @@
 class QCheckBox;
 class QGridLayout;
 class QLabel;
+class QPushButton;
 class QTableWidget;
 class QWidget;
 
@@ -27,6 +28,7 @@ class TriagePage : public PageBase {
   void onRunTriage();
   void onClearPicked();
   void onResultClicked(int row, int col);
+  void onGoBooking();  // 跳到在线预约，并预选当前选中的科室
 
  private:
   void buildSymptomChecks();
@@ -37,6 +39,8 @@ class TriagePage : public PageBase {
   QLabel* pickedLabel_ = nullptr;
   QTableWidget* resultTable_ = nullptr;
   QLabel* detailLabel_ = nullptr;
+  QPushButton* goBookingBtn_ = nullptr;  // 「去预约该科室」
+  int selectedDept_ = -1;                // 结果表里当前选中的科室
   TriageResult lastResult_;  // 上一次的推荐结果（点表格行时用它显示依据）
 };
 

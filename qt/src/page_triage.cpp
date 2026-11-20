@@ -14,6 +14,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "qt_app.h"
 #include "qt_common.h"
 #include "service_extra.h"
 
@@ -78,6 +79,15 @@ TriagePage::TriagePage(QWidget* parent) : PageBase(parent) {
   resultTable_->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Stretch);
   rightLayout->addWidget(resultTable_, 1);
 
+  // 「去预约该科室」：导诊完直接跳到预约页，并把这个科室筛出来。
+  // 旧 ImGui 版每行有个「去预约」小按钮，迁到 Qt 时漏掉了，这里补回来。
+  // 除了按钮，双击结果行也能跳 —— 双保险，不用先想清楚该点哪儿。
+  goBookingBtn_ = new QPushButton(QStringLiteral("去预约该科室"), rightBox);
+  goBookingBtn_->setToolTip(
+      QStringLiteral("跳到「在线预约」并筛出该科室的医生（也可以直接双击结果行）"));
+  goBookingBtn_->setEnabled(false);
+  rightLayout->addWidget(goBookingBtn_);
+
   detailLabel_ = makeHint(QStringLiteral(
       "选中一个科室后，这里会列出它的全部出诊医生 —— 导诊只到「科室」这一层，"
       "选哪位医生是下一步的事。"));
@@ -90,6 +100,12 @@ TriagePage::TriagePage(QWidget* parent) : PageBase(parent) {
   connect(runBtn, &QPushButton::clicked, this, &TriagePage::onRunTriage);
   connect(clearBtn, &QPushButton::clicked, this, &TriagePage::onClearPicked);
   connect(resultTable_, &QTableWidget::cellClicked, this, &TriagePage::onResultClicked);
+  connect(goBookingBtn_, &QPushButton::clicked, this, &TriagePage::onGoBooking);
+  // 双击结果行 = 选中 + 直接跳过去
+  connect(resultTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+    onResultClicked(row, 0);
+    onGoBooking();
+  });
 
   buildSymptomChecks();
 }
@@ -228,6 +244,8 @@ void TriagePage::onResultClicked(int row, int) {
   Hospital& h = db();
   if (row < 0 || row >= lastResult_.count) return;
   const TriageItem& it = lastResult_.items[row];
+  selectedDept_ = it.dept;
+  goBookingBtn_->setEnabled(true);
 
   QStringList lines;
   Hospital& hh = db();
@@ -246,6 +264,19 @@ void TriagePage::onResultClicked(int row, int) {
                             .arg(deptName(h, it.dept))
                             .arg(lines.size())
                             .arg(lines.join(QStringLiteral("<br>"))));
+}
+
+// 跳到在线预约，预选该科室
+void TriagePage::onGoBooking() {
+  if (selectedDept_ < 0) {
+    notifier().warn(QStringLiteral("请先在结果表里选中一个科室"));
+    return;
+  }
+  Hospital& h = db();
+  state().jumpDept = selectedDept_;
+  notifier().info(QStringLiteral("已跳到「在线预约」，并筛出「%1」的医生")
+                      .arg(deptName(h, selectedDept_)));
+  if (auto* w = qobject_cast<MainWindow*>(window())) w->switchPage(PAGE_BOOK);
 }
 
 }  // namespace qt

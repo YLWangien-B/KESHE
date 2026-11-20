@@ -69,6 +69,9 @@ struct QtState {
   bool floorShowCode = true;  // 平面图上房间方块里显示房间号（否则显示科室名）
 
   // 跨页跳转意图：排班页点了某个格子 -> 预约页带着医生/日期/时段打开
+  // 导诊页「去预约」传过来的目标科室（-1 表示没有），预约页 refreshPage 时消费掉
+  int jumpDept = -1;
+
   bool jumpToBooking = false;
   int jumpDoctor = 0;
   int jumpDay = 0;
