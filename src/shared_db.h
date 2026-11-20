@@ -56,7 +56,10 @@ struct Header {
   uint32_t sizeofHospital;  // 必须等于 sizeof(Hospital)：编译器/选项不一致会变
   uint32_t initialized;     // 1 = 已经装载过数据
   uint32_t generation;      // 写操作计数：一端每写一次 +1，另一端据此决定要不要刷新
-  uint32_t reserved;
+  // 审计日志的下一个序号。必须放在共享区里由两端共用 ——
+  // 如果像原来那样用函数内 static 变量，两个进程会各自从 1 开始编号，
+  // 写进环形数组时就会互相覆盖、顺序也乱。
+  uint32_t opSeq;
 };
 
 // 操作类别（写进审计日志）

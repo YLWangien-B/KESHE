@@ -46,7 +46,7 @@ void fillHeader(Block* b) {
   b->header.sizeofHospital = static_cast<uint32_t>(sizeof(Hospital));
   b->header.initialized = 1;
   b->header.generation = 0;
-  b->header.reserved = 0;
+  b->header.opSeq = 0;
 }
 
 // 这个共享区里的数据还能不能用？
@@ -220,10 +220,15 @@ void bump() {
 void logOp(int op, int patient, int doctor, int result) {
   if (!g_block) return;
   // 环形覆盖：seq 从 1 开始，取模定位槽位。最老的记录被新记录盖掉。
-  static uint32_t nextSeq = 1;  // 只在持有锁时被调用，不需要原子
+  //
+  // 序号取自共享区头部（header.opSeq），**不能**用函数内 static：
+  // static 是每个进程各一份，两端都从 1 开始编号，写进同一个环形数组时
+  // 会互相覆盖，取出来的顺序也会乱。
+  // 因为是持有 Lock 时才调用，所以这里自增不需要原子操作。
   Block* b = g_block;
-  OpEntry& e = b->ops[nextSeq % kOpLogSize];
-  e.seq = nextSeq++;
+  const uint32_t seq = ++b->header.opSeq;
+  OpEntry& e = b->ops[seq % kOpLogSize];
+  e.seq = seq;
   e.time = static_cast<uint32_t>(std::time(nullptr));
   e.op = static_cast<int16_t>(op);
   e.patient = static_cast<int16_t>(patient);
@@ -335,13 +340,9 @@ const OpEntry* opEntries() { return g_block ? g_block->ops : nullptr; }
 
 int opFillCount() {
   if (!g_block) return 0;
-  // nextSeq 在 logOp 里从 1 开始自增；写满一轮后停在 kOpLogSize
-  const uint32_t next = g_block->header.generation;  // 仅用于占位，真正条数见下
-  (void)next;
-  int n = 0;
-  for (int i = 0; i < kOpLogSize; ++i)
-    if (g_block->ops[i].seq != 0) ++n;
-  return n;
+  // opSeq 是「写到第几条」，环形数组最多容纳 kOpLogSize 条
+  const uint32_t seq = g_block->header.opSeq;
+  return seq < static_cast<uint32_t>(kOpLogSize) ? static_cast<int>(seq) : kOpLogSize;
 }
 
 const char* opName(int op) {
