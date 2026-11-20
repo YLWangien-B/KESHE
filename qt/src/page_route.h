@@ -32,6 +32,7 @@ class RoutePage : public PageBase {
   void onToChanged(int index);
   void onRoomClicked(int roomIndex, bool shift);
   void onShowCodeToggled(bool on);
+  void onImportDestination();  // 从「我的预约」导入目的地诊室
 
  private:
   void fillRoomCombos();

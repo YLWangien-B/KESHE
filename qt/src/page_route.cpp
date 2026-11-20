@@ -5,6 +5,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -15,6 +16,7 @@
 
 #include "floor_plan.h"
 #include "qt_common.h"
+#include "qt_role.h"
 #include "service.h"
 
 namespace qt {
@@ -32,12 +34,12 @@ RoutePage::RoutePage(QWidget* parent) : PageBase(parent) {
   auto* row = new QHBoxLayout();
   row->addWidget(new QLabel(QStringLiteral("起点："), this));
   fromCombo_ = new QComboBox(this);
-  fromCombo_->setMinimumWidth(300);
+  fromCombo_->setMinimumWidth(240);
   row->addWidget(fromCombo_);
 
   row->addWidget(new QLabel(QStringLiteral("终点："), this));
   toCombo_ = new QComboBox(this);
-  toCombo_->setMinimumWidth(300);
+  toCombo_->setMinimumWidth(240);
   row->addWidget(toCombo_);
 
   auto* queryBtn = new QPushButton(QStringLiteral("查询路线"), this);
@@ -45,6 +47,16 @@ RoutePage::RoutePage(QWidget* parent) : PageBase(parent) {
   row->addWidget(queryBtn);
   auto* swapBtn = new QPushButton(QStringLiteral("交换起终点"), this);
   row->addWidget(swapBtn);
+
+  // 患者端专用：从自己的预约里选一条，终点自动填成那位医生的诊室。
+  // 省得患者再去 48 个房间里翻"我该去哪个诊室"。
+  if (isPatient()) {
+    auto* importBtn = new QPushButton(QStringLiteral("导入目的地"), this);
+    importBtn->setToolTip(
+        QStringLiteral("从「我的预约」里选一条，自动把该医生的诊室设为终点并算出路线"));
+    row->addWidget(importBtn);
+    connect(importBtn, &QPushButton::clicked, this, &RoutePage::onImportDestination);
+  }
   row->addStretch(1);
 
   showCodeCheck_ = new QCheckBox(QStringLiteral("方块显示房间号"), this);
@@ -202,6 +214,67 @@ void RoutePage::onSwap() {
   st.routeValid = false;
   fillRouteTable();
   syncPlanToState();
+}
+
+// 一键导入就诊目的地：列出当前患者「已预约」的记录，选中后把该医生诊室设为终点
+void RoutePage::onImportDestination() {
+  Hospital& h = db();
+  const int patient = state().patient;
+  if (patient < 0 || patient >= h.patients.size()) {
+    notifier().warn(QStringLiteral("请先登录"));
+    return;
+  }
+
+  QVector<int> cand;
+  for (int i = 0; i < h.bookings.size(); ++i) {
+    const Booking& b = h.bookings[i];
+    if (b.patient != patient) continue;
+    if (b.status != BOOKED) continue;  // 只看还没就诊的
+    if (b.doctor < 0 || b.doctor >= h.doctors.size()) continue;
+    if (h.doctors[b.doctor].room < 0) continue;  // 该医生没安排诊室，导不了
+    cand.append(i);
+  }
+  if (cand.isEmpty()) {
+    notifier().warn(QStringLiteral("你还没有「已预约」的记录（或预约的医生未安排诊室）"));
+    return;
+  }
+
+  int pick = cand.first();
+  if (cand.size() > 1) {
+    QStringList items;
+    for (int idx : cand) {
+      const Booking& b = h.bookings[idx];
+      const Doctor& d = h.doctors[b.doctor];
+      items << QStringLiteral("%1 · %2 %3 · %4%5")
+                   .arg(QString::fromUtf8(b.ticket), deptName(h, d.dept),
+                        QString::fromUtf8(d.name), dayText(b.day), slotText(b.slot));
+    }
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(
+        this, QStringLiteral("导入目的地"),
+        QStringLiteral("选一条预约，把它的诊室设为终点："), items, 0, false, &ok);
+    if (!ok) return;
+    const int pos = items.indexOf(chosen);
+    if (pos < 0) return;
+    pick = cand[pos];
+  }
+
+  const Booking& b = h.bookings[pick];
+  const Doctor& d = h.doctors[b.doctor];
+  const int room = d.room;
+
+  state().routeTo = room;
+  state().routeValid = false;
+  // 下拉框按楼层分组，要用 itemData 找回位置，不能拿房间下标当下拉位置
+  for (int k = 0; k < toCombo_->count(); ++k) {
+    if (toCombo_->itemData(k).toInt() == room) {
+      toCombo_->setCurrentIndex(k);
+      break;
+    }
+  }
+  applyRouteQuery();  // 立刻把路线算出来并画在图上
+  notifier().ok(QStringLiteral("已把 %1 医生的诊室（%2）设为目的地")
+                    .arg(QString::fromUtf8(d.name), roomName(h, room)));
 }
 
 void RoutePage::onQuery() { applyRouteQuery(); }
