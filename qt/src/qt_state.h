@@ -37,6 +37,7 @@ enum Page {
   PAGE_QUEUE,       // 7 候诊队列
   PAGE_REGISTRY,    // 人员管理（管理端专有：登记患者 / 医生）
   PAGE_ABOUT,       // 数据总览
+  PAGE_HOME,        // 首页（患者端：待就诊卡片 + 快捷入口）
   PAGE_COUNT
 };
 

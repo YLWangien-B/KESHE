@@ -28,7 +28,7 @@ namespace qt {
 SchedulePage::SchedulePage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 5  排班展示")));
+  layout->addWidget(makePageTitle(QStringLiteral("排班与停诊")));
   layout->addWidget(makeHint(QStringLiteral(
       "排班用二维数组存（每位医生一张 日期 × 时段 的表），两个下标就是主键，"
       "查询 O(1)。格内是「余号 / 总数」，颜色越绿越好约；点任意格子可以直接带到预约页。")));

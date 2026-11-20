@@ -1,5 +1,9 @@
 ﻿/* =============================================================================
  *  qt_app.cpp  —  主窗口实现
+ *
+ *  导航设计（见 qt_app.h 的说明）：
+ *    患者端 = 手机 App：底部 5 个标签，组内用二级标签
+ *    管理端 = 按实际就诊流程的 5 个分页
  * ========================================================================== */
 #include "qt_app.h"
 
@@ -9,27 +13,33 @@
 #include <QDateTime>
 #include <QDockWidget>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
+#include <QVBoxLayout>
+#include <QWidget>
 
 #include "load.h"
 #include "qt_common.h"
 #include "qt_role.h"
-#include "shared_db.h"
 #include "qt_widgets.h"
+#include "shared_db.h"
 
 #include "page_about.h"
 #include "page_booking.h"
 #include "page_doctor.h"
+#include "page_home.h"
 #include "page_manage.h"
 #include "page_queue.h"
 #include "page_registry.h"
@@ -39,35 +49,47 @@
 
 namespace qt {
 
+namespace {
+// 患者端底部标签栏的按钮样式：大、平、选中高亮 —— 照着手机 App 的感觉做
+const char* kBottomBarStyle =
+    "QPushButton{"
+    "  border:none; border-top:2px solid transparent; background:transparent;"
+    "  color:#8a9199; font-size:13px; padding:6px 2px;"
+    "}"
+    "QPushButton:hover{ color:#c9d3de; }"
+    "QPushButton:checked{"
+    "  color:#6fb3ff; border-top:2px solid #4a9eff; font-weight:bold;"
+    "}";
+}  // namespace
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle(QStringLiteral("医院门诊预约与智能导诊系统 —— ") +
                  QString::fromUtf8(roleName()));
-  resize(1200, 820);
+  resize(isPatient() ? 1100 : 1280, 860);
 
   stack_ = new QStackedWidget(this);
-  setCentralWidget(stack_);
 
-  buildPages();   // 先建页面（页面构造时会读 db()）
+  buildPages();   // 先建页面（页面构造时会读 db()），并把它们分好组
   buildMenus();
   buildToolBar();
-  buildNavigationDock();
+  if (isPatient())
+    buildPatientNav();   // 底部标签栏（手机 App 模式）
+  else
+    buildAdminNav();     // 左侧流程导航
   buildLogDock();
   buildStatusBar();
 
   // 任何页面调 notifier().xxx() 都会走到这里：写日志 + 更新状态栏
   connect(&notifier(), &Notifier::notified, this, &MainWindow::onNotice);
 
-  // 本角色可用的第一页
-  if (!pageOrder_.isEmpty()) switchPage(pageOrder_.first());
+  if (!groups_.isEmpty()) switchPage(groups_.first().first());
   updateStatusSummary();
 
   // ---- 定时轮询共享区的写计数：另一端改了数据就刷新当前页 ----
-  // Qt 是保留模式，控件不会自己跟着别人改的数据变；共享模式下必须主动查。
   lastGeneration_ = shared::generation();
   pollTimer_ = new QTimer(this);
   connect(pollTimer_, &QTimer::timeout, this, [this]() {
-    // 每次轮询顺便报一次心跳：让另一端知道本进程还活着
-    shared::beat();
+    shared::beat();  // 顺便报心跳，让另一端知道本进程还活着
 
     const uint32_t g = shared::generation();
     if (g == lastGeneration_) return;
@@ -79,7 +101,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     updateStatusSummary();
     notifier().info(QStringLiteral("检测到另一端修改了数据，已刷新当前页"));
   });
-  // 单进程模式下 generation 恒为 0，定时器不做任何事，没有额外开销。
   pollTimer_->start(700);
 }
 
@@ -90,11 +111,12 @@ MainWindow::~MainWindow() {
 }
 
 // =============================================================================
-//  页面
+//  页面与分组
 // =============================================================================
 void MainWindow::buildPages() {
   // pages_ 的下标就是 Page 枚举，本角色用不到的页面留 nullptr。
   pages_ = QVector<PageBase*>(PAGE_COUNT, nullptr);
+  pages_[PAGE_HOME] = new HomePage(this);
   pages_[PAGE_TRIAGE] = new TriagePage(this);
   pages_[PAGE_DOCTOR] = new DoctorPage(this);
   pages_[PAGE_BOOK] = new BookingPage(this);
@@ -105,52 +127,115 @@ void MainWindow::buildPages() {
   pages_[PAGE_REGISTRY] = new RegistryPage(this);
   pages_[PAGE_ABOUT] = new AboutPage(this);
 
-  // 只有本角色能用的页面才进页面栈；pageOrder_ 的顺序就是导航栏与页面栈的顺序。
-  pageOrder_.clear();
-  for (int p = 0; p < PAGE_COUNT; ++p) {
-    if (!pageEnabled(p)) continue;
-    PageBase* pg = pages_[p];
-    if (pg == nullptr) continue;
-    stack_->addWidget(pg);
-    pageOrder_.append(p);
+  groups_.clear();
+  groupLabels_.clear();
+  groupTabs_.clear();
+
+  // 登记一个分页：组内 1 页就直接进栈，多页则套一层 QTabWidget 做二级标签。
+  auto addGroup = [this](const char* label, const QVector<int>& want) {
+    QVector<int> keep;
+    for (int p : want)
+      if (p >= 0 && p < PAGE_COUNT && pageEnabled(p) && pages_[p] != nullptr) keep.append(p);
+    if (keep.isEmpty()) return;
+
+    if (keep.size() == 1) {
+      stack_->addWidget(pages_[keep.first()]);
+      groupTabs_.append(nullptr);
+    } else {
+      auto* tabs = new QTabWidget(this);
+      tabs->setDocumentMode(true);
+      for (int p : keep) tabs->addTab(pages_[p], QString::fromUtf8(pageTitle(p)));
+      stack_->addWidget(tabs);
+      groupTabs_.append(tabs);
+
+      // 用户点二级标签时：刷新该页并记住当前页
+      const int gi = groups_.size();
+      connect(tabs, &QTabWidget::currentChanged, this, [this, gi](int idx) {
+        if (syncingNav_) return;
+        if (gi < 0 || gi >= groups_.size() || idx < 0 || idx >= groups_[gi].size()) return;
+        const int page = groups_[gi][idx];
+        pages_[page]->refreshPage();
+        currentPageIndex_ = page;
+        if (statusPage_)
+          statusPage_->setText(QStringLiteral("当前：") + QString::fromUtf8(pageTitle(page)));
+      });
+    }
+    groups_.append(keep);
+    groupLabels_.append(QString::fromUtf8(label));
+  };
+
+  if (isPatient()) {
+    // 手机 App 的 5 个标签：先看"我的事"，再是工具，最后是"我的"
+    addGroup("首页", {PAGE_HOME});
+    addGroup("导诊", {PAGE_TRIAGE});
+    addGroup("预约", {PAGE_BOOK, PAGE_DOCTOR});
+    addGroup("候诊", {PAGE_QUEUE});
+    addGroup("我的", {PAGE_MANAGE, PAGE_ROUTE});
+  } else {
+    // 按实际就诊流程排列：来院 → 叫号 → 排班 → 患者 → 资源 → 系统
+    addGroup("今日候诊", {PAGE_QUEUE});
+    addGroup("排班管理", {PAGE_SCHEDULE});
+    addGroup("患者服务", {PAGE_MANAGE, PAGE_REGISTRY});
+    addGroup("资源导航", {PAGE_DOCTOR, PAGE_ROUTE});
+    addGroup("系统数据", {PAGE_ABOUT});
   }
-  Q_ASSERT(!pageOrder_.isEmpty());
+  Q_ASSERT(!groups_.isEmpty());
 }
 
+// =============================================================================
+//  切页
+// =============================================================================
 void MainWindow::switchPage(int page) {
   if (page < 0 || page >= PAGE_COUNT) return;
-  if (!pageEnabled(page) || pages_[page] == nullptr) return;  // 本角色没有这一页
+  if (!pageEnabled(page) || pages_[page] == nullptr) return;
 
-  const int idx = pageOrder_.indexOf(page);
-  if (idx < 0) return;
+  int gi = -1, si = 0;
+  for (int g = 0; g < groups_.size(); ++g) {
+    const int k = groups_[g].indexOf(page);
+    if (k >= 0) {
+      gi = g;
+      si = k;
+      break;
+    }
+  }
+  if (gi < 0) return;
 
-  // 切页时刷新一次：Qt 是保留模式，不刷新就会显示旧数据
-  pages_[page]->refreshPage();
-  stack_->setCurrentIndex(idx);
-
-  // 菜单勾选状态跟着走
-  if (idx < pageActions_.size() && pageActions_[idx]) pageActions_[idx]->setChecked(true);
-
-  // 导航栏选中项跟着走（注意不要反过来再触发一次 switchPage）
+  pages_[page]->refreshPage();  // Qt 是保留模式，切页必须重新读数据
   syncingNav_ = true;
-  if (nav_) nav_->setCurrentRow(idx);
+  stack_->setCurrentIndex(gi);
+  if (groupTabs_[gi] != nullptr) groupTabs_[gi]->setCurrentIndex(si);
+  currentPageIndex_ = page;
   syncingNav_ = false;
 
-  if (statusPage_) {
+  highlightNav(gi);
+
+  if (statusPage_)
     statusPage_->setText(QStringLiteral("当前：") + QString::fromUtf8(pageTitle(page)));
-  }
+}
+
+void MainWindow::highlightNav(int groupIndex) {
+  syncingNav_ = true;
+  for (int b = 0; b < navButtons_.size(); ++b)
+    navButtons_[b]->setChecked(b == groupIndex);
+  if (nav_) nav_->setCurrentRow(groupIndex);
+  syncingNav_ = false;
+  if (groupIndex >= 0 && groupIndex < groupActions_.size() && groupActions_[groupIndex])
+    groupActions_[groupIndex]->setChecked(true);
 }
 
 int MainWindow::currentPage() const {
-  if (!stack_) return pageOrder_.isEmpty() ? PAGE_TRIAGE : pageOrder_.first();
-  const int idx = stack_->currentIndex();
-  if (idx < 0 || idx >= pageOrder_.size()) return pageOrder_.isEmpty() ? PAGE_TRIAGE : pageOrder_.first();
-  return pageOrder_[idx];
+  if (currentPageIndex_ >= 0) return currentPageIndex_;
+  if (groups_.isEmpty() || groups_.first().isEmpty()) return PAGE_HOME;
+  return groups_.first().first();
 }
 
 void MainWindow::afterLoad() {
   updateStatusSummary();
-  switchPage(PAGE_TRIAGE);
+  // 患者端落在首页（一眼看清"下次什么时候来"），管理端落在今日候诊
+  if (isPatient())
+    switchPage(PAGE_HOME);
+  else
+    switchPage(PAGE_QUEUE);
 }
 
 // =============================================================================
@@ -169,21 +254,21 @@ void MainWindow::buildMenus() {
   quit->setShortcut(QKeySequence::Quit);
   connect(quit, &QAction::triggered, this, &QWidget::close);
 
-  // ---- 功能：只列本角色可用的页面，Ctrl+1..n 直达 ----
-  QMenu* pageMenu = menuBar()->addMenu(QStringLiteral("功能(&N)"));
+  // ---- 导航：列出本角色的分页，Ctrl+1..n 直达 ----
+  QMenu* pageMenu = menuBar()->addMenu(QStringLiteral("导航(&N)"));
   auto* group = new QActionGroup(this);
   group->setExclusive(true);
-  pageActions_.clear();
-  for (int k = 0; k < pageOrder_.size(); ++k) {
-    const int page = pageOrder_[k];
-    QAction* act = pageMenu->addAction(QString::fromUtf8(pageTitle(page)));
+  groupActions_.clear();
+  for (int k = 0; k < groupLabels_.size(); ++k) {
+    QAction* act = pageMenu->addAction(groupLabels_[k]);
     act->setCheckable(true);
     if (k < 9) act->setShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(k + 1)));
     group->addAction(act);
-    pageActions_.append(act);
-    connect(act, &QAction::triggered, this, [this, page]() { switchPage(page); });
+    groupActions_.append(act);
+    const int gi = k;
+    connect(act, &QAction::triggered, this, [this, gi]() { onNavGroup(gi); });
   }
-  if (!pageActions_.isEmpty()) pageActions_.first()->setChecked(true);
+  if (!groupActions_.isEmpty()) groupActions_.first()->setChecked(true);
 
   // ---- 视图：停靠窗口的显示开关由 Qt 自动加在菜单末尾 ----
   viewMenu_ = menuBar()->addMenu(QStringLiteral("视图(&V)"));
@@ -199,7 +284,7 @@ void MainWindow::buildMenus() {
 // =============================================================================
 void MainWindow::buildToolBar() {
   QToolBar* bar = addToolBar(QStringLiteral("常用"));
-  bar->setObjectName(QStringLiteral("mainToolBar"));  // saveState 需要
+  bar->setObjectName(QStringLiteral("mainToolBar"));
   bar->setMovable(false);
   bar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
 
@@ -212,27 +297,76 @@ void MainWindow::buildToolBar() {
 }
 
 // =============================================================================
-//  停靠窗口
+//  患者端：底部标签栏（手机 App 模式）
 // =============================================================================
-void MainWindow::buildNavigationDock() {
-  auto* dock = new QDockWidget(QStringLiteral("功能导航"), this);
-  dock->setObjectName(QStringLiteral("navDock"));
-  dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+void MainWindow::buildPatientNav() {
+  bottomBar_ = new QWidget(this);
+  bottomBar_->setObjectName(QStringLiteral("bottomBar"));
+  bottomBar_->setStyleSheet(QStringLiteral(
+      "#bottomBar{background:#1b2027;border-top:1px solid #2c333c;}"));
 
-  nav_ = new QListWidget(dock);
-  // 只列本角色可用的页面，顺序与 pageOrder_ 一致（行号就是页面栈下标）
-  for (int k = 0; k < pageOrder_.size(); ++k)
-    nav_->addItem(QString::fromUtf8(pageTitle(pageOrder_[k])));
-  nav_->setCurrentRow(0);
-  nav_->setMinimumWidth(150);
+  auto* row = new QHBoxLayout(bottomBar_);
+  row->setContentsMargins(4, 2, 4, 2);
+  row->setSpacing(0);
 
-  connect(nav_, &QListWidget::currentRowChanged, this, &MainWindow::onNavRowChanged);
+  navButtons_.clear();
+  for (int k = 0; k < groupLabels_.size(); ++k) {
+    auto* b = new QPushButton(groupLabels_[k], bottomBar_);
+    b->setCheckable(true);
+    b->setAutoExclusive(true);
+    b->setMinimumHeight(56);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    b->setStyleSheet(QString::fromLatin1(kBottomBarStyle));
+    b->setCursor(Qt::PointingHandCursor);
+    row->addWidget(b);
+    navButtons_.append(b);
+    const int gi = k;
+    connect(b, &QPushButton::clicked, this, [this, gi]() { onNavGroup(gi); });
+  }
 
-  dock->setWidget(nav_);
-  addDockWidget(Qt::LeftDockWidgetArea, dock);
-  viewMenu_->addAction(dock->toggleViewAction());
+  // 把页面栈和底部栏组合成中心控件
+  auto* central = new QWidget(this);
+  auto* v = new QVBoxLayout(central);
+  v->setContentsMargins(0, 0, 0, 0);
+  v->setSpacing(0);
+  v->addWidget(stack_, 1);
+  v->addWidget(bottomBar_, 0);
+  setCentralWidget(central);
 }
 
+// =============================================================================
+//  管理端：左侧流程导航
+// =============================================================================
+void MainWindow::buildAdminNav() {
+  navDock_ = new QDockWidget(QStringLiteral("工作台"), this);
+  navDock_->setObjectName(QStringLiteral("navDock"));
+  navDock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+  nav_ = new QListWidget(navDock_);
+  for (int k = 0; k < groupLabels_.size(); ++k) nav_->addItem(groupLabels_[k]);
+  nav_->setCurrentRow(0);
+  nav_->setMinimumWidth(170);
+  nav_->setStyleSheet(QStringLiteral(
+      "QListWidget{border:none;background:#1b2027;color:#c9d3de;font-size:14px;}"
+      "QListWidget::item{padding:12px 14px;border-left:3px solid transparent;}"
+      "QListWidget::item:selected{background:#232b35;color:#6fb3ff;"
+      "border-left:3px solid #4a9eff;}"));
+
+  connect(nav_, &QListWidget::currentRowChanged, this, [this](int row) {
+    if (syncingNav_) return;
+    onNavGroup(row);
+  });
+
+  navDock_->setWidget(nav_);
+  addDockWidget(Qt::LeftDockWidgetArea, navDock_);
+  viewMenu_->addAction(navDock_->toggleViewAction());
+
+  setCentralWidget(stack_);
+}
+
+// =============================================================================
+//  操作日志
+// =============================================================================
 void MainWindow::buildLogDock() {
   auto* dock = new QDockWidget(QStringLiteral("操作日志"), this);
   dock->setObjectName(QStringLiteral("logDock"));
@@ -241,12 +375,15 @@ void MainWindow::buildLogDock() {
 
   log_ = new QPlainTextEdit(dock);
   log_->setReadOnly(true);
-  log_->setMaximumBlockCount(500);  // 最多留 500 行，防止长时间运行占内存
+  log_->setMaximumBlockCount(500);
   log_->setMinimumHeight(110);
 
   dock->setWidget(log_);
   addDockWidget(Qt::BottomDockWidgetArea, dock);
   viewMenu_->addAction(dock->toggleViewAction());
+  // 患者端做成手机 App 的样子：日志面板默认收起，需要时从「视图」打开。
+  // 管理端保持常显 —— 排障和审计都靠它。
+  if (isPatient()) dock->hide();
 }
 
 void MainWindow::buildStatusBar() {
@@ -259,10 +396,10 @@ void MainWindow::buildStatusBar() {
 // =============================================================================
 //  槽
 // =============================================================================
-void MainWindow::onNavRowChanged(int row) {
-  if (syncingNav_) return;  // 是代码改的选中项，不要反过来再切一次页
-  if (row < 0 || row >= pageOrder_.size()) return;
-  switchPage(pageOrder_[row]);
+void MainWindow::onNavGroup(int groupIndex) {
+  if (groupIndex < 0 || groupIndex >= groups_.size()) return;
+  if (groups_[groupIndex].isEmpty()) return;
+  switchPage(groups_[groupIndex].first());
 }
 
 void MainWindow::onReloadData() {
@@ -282,7 +419,6 @@ void MainWindow::onReloadData() {
     return;
   }
 
-  // 数据变了，所有页面的下拉框内容都可能过期 -> 全部标脏，切到哪页刷新哪页
   updateStatusSummary();
   notifier().ok(QStringLiteral("数据已重新装载（未通过校验 %1 行，容量溢出 %2 处）")
                     .arg(Loader::errorCount())
@@ -291,27 +427,19 @@ void MainWindow::onReloadData() {
 }
 
 void MainWindow::onRefreshCurrentPage() {
-  pages_[currentPage()]->refreshPage();
+  const int page = currentPage();
+  if (page >= 0 && page < pages_.size() && pages_[page] != nullptr) pages_[page]->refreshPage();
   notifier().info(QStringLiteral("已刷新「%1」")
-                      .arg(QString::fromUtf8(pageTitle(currentPage()))));
+                      .arg(QString::fromUtf8(pageTitle(page))));
 }
 
 void MainWindow::onNotice(int kind, const QString& msg) {
-  // 时间戳 + 类型标签
   QString tag;
   switch (kind) {
-    case NOTICE_OK:
-      tag = QStringLiteral("[成功]");
-      break;
-    case NOTICE_WARN:
-      tag = QStringLiteral("[提示]");
-      break;
-    case NOTICE_ERROR:
-      tag = QStringLiteral("[失败]");
-      break;
-    default:
-      tag = QStringLiteral("[信息]");
-      break;
+    case NOTICE_OK: tag = QStringLiteral("[成功]"); break;
+    case NOTICE_WARN: tag = QStringLiteral("[提示]"); break;
+    case NOTICE_ERROR: tag = QStringLiteral("[失败]"); break;
+    default: tag = QStringLiteral("[信息]"); break;
   }
   const QString line = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")) +
                        QLatin1Char(' ') + tag + QLatin1Char(' ') + msg;
@@ -344,7 +472,6 @@ void MainWindow::onShowAboutDialog() {
 void MainWindow::updateStatusSummary() {
   Hospital& h = db();
   if (statusData_) {
-    // 运行模式与写计数摆在最前面：排查「为什么另一端看不到我的改动」时一眼就知道
     QString mode;
     if (shared::isOpen()) {
       const int peers = shared::alivePeers();
@@ -356,7 +483,6 @@ void MainWindow::updateStatusSummary() {
                    .arg(QString::fromUtf8(shared::roleText(role)))
                    .arg(shared::generation());
       } else if (shared::hasStalePeer()) {
-        // 槽还占着但心跳停了 —— 说明对端是被强杀/崩溃的
         mode = QStringLiteral("[共享 · 对端异常退出 · 写计数 %1] ")
                    .arg(shared::generation());
       } else {
@@ -365,17 +491,17 @@ void MainWindow::updateStatusSummary() {
     } else {
       mode = QStringLiteral("[单进程] ");
     }
-    // 患者端显示"我是谁"，避免操作了半天不知道以谁的身份在点
     if (state().loggedIn && state().patient >= 0 && state().patient < db().patients.size()) {
       mode = QStringLiteral("[%1] ").arg(patientLabel(db(), state().patient)) + mode;
     }
-    statusData_->setText(mode + QStringLiteral("科室 %1 · 症状 %2（关联 %3） · 医生 %4 · 患者 %5 · 房间 %6")
-                             .arg(h.depts.size())
-                             .arg(h.symptomGraph.symptomCount())
-                             .arg(h.symptomGraph.edgeCount())
-                             .arg(h.doctors.size())
-                             .arg(h.patients.size())
-                             .arg(h.rooms.size()));
+    statusData_->setText(
+        mode + QStringLiteral("科室 %1 · 症状 %2（关联 %3） · 医生 %4 · 患者 %5 · 房间 %6")
+                   .arg(h.depts.size())
+                   .arg(h.symptomGraph.symptomCount())
+                   .arg(h.symptomGraph.edgeCount())
+                   .arg(h.doctors.size())
+                   .arg(h.patients.size())
+                   .arg(h.rooms.size()));
   }
 }
 

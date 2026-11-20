@@ -30,7 +30,7 @@ namespace qt {
 BookingPage::BookingPage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 3  在线预约")));
+  layout->addWidget(makePageTitle(QStringLiteral("在线预约")));
   layout->addWidget(makeHint(QStringLiteral(
       "先选患者与医生，再在下面的号源格子上点一个时段。"
       "预约时「检查停诊 → 检查余量 → 扣减 → 递增版本号」连着做完，中间不让出执行权，"

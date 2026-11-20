@@ -19,7 +19,7 @@ namespace qt {
 DoctorPage::DoctorPage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 2  医生查询")));
+  layout->addWidget(makePageTitle(QStringLiteral("医生查询")));
   layout->addWidget(makeHint(QStringLiteral(
       "按科室 / 职称 / 擅长领域三种方式查。35 名医生放在顺序表里，"
       "「按编号查」走散列表是平均 O(1)，而这里的三类查询是一次线性筛选 —— "

@@ -74,6 +74,8 @@ set(APP_SOURCES
     src/page_route.h
     src/page_queue.cpp
     src/page_queue.h
+    src/page_home.cpp
+    src/page_home.h
     src/page_registry.cpp
     src/page_registry.h
     src/page_about.cpp

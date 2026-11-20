@@ -24,7 +24,7 @@ namespace qt {
 RoutePage::RoutePage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 6  就诊路线")));
+  layout->addWidget(makePageTitle(QStringLiteral("就诊路线")));
   layout->addWidget(makeHint(QStringLiteral(
       "把每个房间当图的一个顶点、能走过去就画一条边、边权是距离；"
       "装载时用 Floyd 一次算出任意两点最短路，所以查询是查表 + 还原路径。"

@@ -23,7 +23,7 @@ namespace qt {
 ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 4  预约管理")));
+  layout->addWidget(makePageTitle(QStringLiteral("预约管理")));
   layout->addWidget(makeHint(QStringLiteral(
       "预约记录存在顺序表里。取消时把该时段的号源退回，并递增槽的版本号 ——"
       "这样此前看到的余号信息立刻作废，与预约时用的是同一套版本号机制。")));

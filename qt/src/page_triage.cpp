@@ -27,7 +27,7 @@ constexpr int kMaxPick = 8;  // 一次最多选几个症状（与 service.h 的 
 TriagePage::TriagePage(QWidget* parent) : PageBase(parent) {
   auto* root = new QVBoxLayout(this);
 
-  root->addWidget(makePageTitle(QStringLiteral("功能 1  智能导诊")));
+  root->addWidget(makePageTitle(QStringLiteral("智能导诊")));
   root->addWidget(makeHint(QStringLiteral(
       "症状与科室的关联用<b>带权二部图</b>表示（题目实现提示第 1 条）："
       "两侧顶点分别是症状和科室，边权 1..5 是关联强度。"

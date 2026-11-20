@@ -42,7 +42,7 @@ const Waiting* findWaiting(const Hospital& h, int patient, int doctor) {
 QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
   auto* layout = new QVBoxLayout(this);
 
-  layout->addWidget(makePageTitle(QStringLiteral("功能 7  候诊队列")));
+  layout->addWidget(makePageTitle(QStringLiteral("候诊队列")));
 
   if (isAdmin()) {
     // ---------------------------------------------------------------------

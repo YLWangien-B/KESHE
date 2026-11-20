@@ -33,8 +33,9 @@ bool pageEnabled(int page) {
         return false;
     }
   }
-  // 患者端：导诊、查医生、预约、取消自己的预约、路线、签到候诊
+  // 患者端：首页、导诊、查医生、预约、取消自己的预约、路线、签到候诊
   switch (page) {
+    case PAGE_HOME:
     case PAGE_TRIAGE:
     case PAGE_DOCTOR:
     case PAGE_BOOK:
