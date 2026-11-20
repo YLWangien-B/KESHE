@@ -117,17 +117,28 @@ void RoutePage::refreshPage() {
   fillRoomCombos();
 
   // 恢复状态里的起终点
+  // 下拉框按楼层分组排列，所以「第几项」!= 「房间在 h.rooms 里的下标」。
+  // 一律通过 itemData 换算，别用 currentIndex()。
+  auto setComboByRoom = [](QComboBox* c, int room) {
+    for (int k = 0; k < c->count(); ++k)
+      if (c->itemData(k).toInt() == room) {
+        c->setCurrentIndex(k);
+        return;
+      }
+    if (c->count() > 0) c->setCurrentIndex(0);
+  };
+
   syncing_ = true;
-  if (st.routeFrom >= 0 && st.routeFrom < h.rooms.size()) fromCombo_->setCurrentIndex(st.routeFrom);
-  if (st.routeTo >= 0 && st.routeTo < h.rooms.size()) toCombo_->setCurrentIndex(st.routeTo);
-  if (st.routeFrom == st.routeTo && h.rooms.size() > 1) {
-    toCombo_->setCurrentIndex(h.rooms.size() - 1);
-    st.routeTo = h.rooms.size() - 1;
+  setComboByRoom(fromCombo_, st.routeFrom);
+  setComboByRoom(toCombo_, st.routeTo);
+  if (fromCombo_->count() > 1 && fromCombo_->currentData().toInt() == toCombo_->currentData().toInt()) {
+    // 起终点相同：把终点挪到列表最后一项（下标换算后仍然不同）
+    toCombo_->setCurrentIndex(toCombo_->count() - 1);
   }
   syncing_ = false;
 
-  st.routeFrom = fromCombo_->currentIndex();
-  st.routeTo = toCombo_->currentIndex();
+  st.routeFrom = fromCombo_->currentData().toInt();
+  st.routeTo = toCombo_->currentData().toInt();
 
   fillRouteTable();
   syncPlanToState();
@@ -136,8 +147,8 @@ void RoutePage::refreshPage() {
 // 起终点下拉框：按楼层分组列出全部房间
 void RoutePage::fillRoomCombos() {
   Hospital& h = db();
-  const int keepFrom = fromCombo_->currentIndex();
-  const int keepTo = toCombo_->currentIndex();
+  const int keepFrom = fromCombo_->currentData().toInt();
+  const int keepTo = toCombo_->currentData().toInt();
 
   QSignalBlocker b1(fromCombo_);
   QSignalBlocker b2(toCombo_);
@@ -161,8 +172,8 @@ void RoutePage::fillRoomCombos() {
       if (c->itemData(k).toInt() == want) target = k;
     c->setCurrentIndex(target);
   };
-  restore(fromCombo_, keepFrom >= 0 ? db().rooms.size() > 0 ? keepFrom : 0 : 0);
-  restore(toCombo_, keepTo >= 0 ? keepTo : 0);
+  restore(fromCombo_, keepFrom);
+  restore(toCombo_, keepTo);
 }
 
 void RoutePage::onFromChanged(int) {

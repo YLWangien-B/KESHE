@@ -149,10 +149,15 @@ void BookingPage::refreshPage() {
   rebuildDoctorCombo();
 
   // 若当前医生不在筛选后的列表里，选第一个
+  //
+  // 注意：这里必须用 currentData()，不能用 currentIndex()。
+  // 下拉框里的项目是「按科室筛选后的子集」，currentIndex 是它在列表中的位置，
+  // 而网格要的是医生在 h.doctors 里的下标 —— 两者只有「全部科室」时才碰巧相等。
+  // 用错会画出另一位医生的排班（表现为"上午显示有空闲、实际约不了"）。
   if (doctorCombo_->count() == 0) {
     grid_->setDoctor(-1);
   } else {
-    grid_->setDoctor(doctorCombo_->currentIndex());
+    grid_->setDoctor(doctorCombo_->currentData().toInt());
   }
   grid_->setSelection(st.day, st.slot);
   updateSlotInfo();
