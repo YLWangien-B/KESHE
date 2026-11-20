@@ -9,8 +9,8 @@
  * ========================================================================== */
 #include "page_queue.h"
 
-#include <QCheckBox>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -49,27 +49,21 @@ QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
     //  管理端：完整队列管理
     // ---------------------------------------------------------------------
     layout->addWidget(makeHint(QStringLiteral(
-        "队列用<b>环形队列</b>实现，入队出队都是 O(1)，出队腾出的位置给后来的患者循环使用。"
+        "选医生 → 看该医生的候诊队伍 → 叫号 / 过号 / 就诊完成。"
+        "队列用<b>环形队列</b>实现，入队出队都是 O(1)。"
         "「先来先看」由 Queue::callNext 守住：队首已被叫号就不许越过他去叫后面的人；"
-        "过号记满 2 次重新排到队尾。")));
+        "过号记满 2 次重新排到队尾。替患者签到时点「患者签到…」。")));
 
+    // 这里**不放患者下拉框**：这一页是"医生看自己的候诊队伍"，
+    // 到底谁在队伍里由队列表本身说明；需要替某个患者签到时，
+    // 点「患者签到…」会弹出候选列表（只列该医生名下已预约未签到的人）。
     auto* row = new QHBoxLayout();
-    row->addWidget(new QLabel(QStringLiteral("患者："), this));
-    patientCombo_ = new QComboBox(this);
-    patientCombo_->setMinimumWidth(180);
-    row->addWidget(patientCombo_);
-
     row->addWidget(new QLabel(QStringLiteral("医生："), this));
     doctorCombo_ = new QComboBox(this);
     doctorCombo_->setMinimumWidth(200);
     row->addWidget(doctorCombo_);
 
-    // 默认只列「该患者预约过的医生」——36 个医生里翻找太费劲。
-    // 但叫号时可能需要看别的医生的队伍，所以留一个开关可以放开。
-    showAllDoctors_ = new QCheckBox(QStringLiteral("显示全部医生"), this);
-    row->addWidget(showAllDoctors_);
-
-    auto* inBtn = new QPushButton(QStringLiteral("患者签到排队"), this);
+    auto* inBtn = new QPushButton(QStringLiteral("患者签到…"), this);
     inBtn->setDefault(true);
     row->addWidget(inBtn);
     auto* callBtn = new QPushButton(QStringLiteral("叫下一位"), this);
@@ -105,12 +99,6 @@ QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
     connect(finishBtn, &QPushButton::clicked, this, &QueuePage::onFinish);
     connect(doctorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             &QueuePage::onDoctorChanged);
-    connect(patientCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            &QueuePage::onPatientChanged);
-    connect(showAllDoctors_, &QCheckBox::toggled, this, [this](bool) {
-      rebuildDoctorCombo();
-      fillQueueTable();
-    });
     return;
   }
 
@@ -172,20 +160,6 @@ void QueuePage::refreshPage() {
     return;
   }
 
-  Hospital& h = db();
-  QtState& st = state();
-
-  const int keepP = patientCombo_->currentIndex();
-  {
-    QSignalBlocker b(patientCombo_);
-    patientCombo_->clear();
-    for (int i = 0; i < h.patients.size(); ++i) patientCombo_->addItem(patientLabel(h, i));
-    int want = (keepP >= 0 && keepP < patientCombo_->count()) ? keepP : st.patient;
-    if (want < 0 || want >= patientCombo_->count()) want = 0;
-    patientCombo_->setCurrentIndex(want);
-    st.patient = want;
-  }
-
   rebuildDoctorCombo();
   fillQueueTable();
 }
@@ -193,31 +167,11 @@ void QueuePage::refreshPage() {
 // =============================================================================
 //  管理端：该医生的队伍
 // =============================================================================
-// 医生下拉框：默认只列「该患者预约过（或在排队）的医生」，
-// 勾上「显示全部医生」才列全部 36 位（叫号时可能需要）。
+// 医生下拉框：列出全部医生。这一页不需要先选患者 ——
+// 选医生就能看该医生的候诊队伍并叫号；替患者签到时再单独选人。
 void QueuePage::rebuildDoctorCombo() {
   Hospital& h = db();
   QtState& st = state();
-  const int patient = patientCombo_->currentIndex();
-
-  QVector<int> related;
-  if (patient >= 0) {
-    for (int i = 0; i < h.bookings.size(); ++i) {
-      const Booking& b = h.bookings[i];
-      if (b.patient != patient) continue;
-      if (b.status != BOOKED && b.status != FINISHED) continue;
-      if (!related.contains(b.doctor)) related.append(b.doctor);
-    }
-    for (int i = 0; i < h.waiting.size(); ++i) {
-      const Waiting& w = h.waiting.at(i);
-      if (w.patient == patient && !related.contains(w.doctor)) related.append(w.doctor);
-    }
-  }
-
-  // 该患者没有任何相关医生时退回全部列表，否则下拉框会是空的
-  const bool filtered = (showAllDoctors_ == nullptr || !showAllDoctors_->isChecked()) &&
-                        !related.isEmpty();
-
   const int keepD = st.doctor;
   QSignalBlocker b(doctorCombo_);
   doctorCombo_->clear();
@@ -228,10 +182,7 @@ void QueuePage::rebuildDoctorCombo() {
                                    deptName(h, h.doctors[d].dept)),
                           d);  // 存真实医生下标
   };
-  if (filtered)
-    for (int d : related) addOne(d);
-  else
-    for (int i = 0; i < h.doctors.size(); ++i) addOne(i);
+  for (int i = 0; i < h.doctors.size(); ++i) addOne(i);
 
   // 恢复选中：按真实医生下标找，不能用位置
   int target = 0;
@@ -239,12 +190,6 @@ void QueuePage::rebuildDoctorCombo() {
     if (doctorCombo_->itemData(k).toInt() == keepD) target = k;
   if (doctorCombo_->count() > 0) doctorCombo_->setCurrentIndex(target);
   st.doctor = doctorCombo_->count() > 0 ? doctorCombo_->currentData().toInt() : 0;
-}
-
-void QueuePage::onPatientChanged(int index) {
-  if (index >= 0) state().patient = index;
-  rebuildDoctorCombo();
-  fillQueueTable();
 }
 
 void QueuePage::onDoctorChanged(int) {
@@ -454,8 +399,40 @@ void QueuePage::onCheckIn() {
   int doctor = -1;
 
   if (isAdmin()) {
-    patient = patientCombo_->currentIndex();
-    doctor = doctorCombo_->currentData().toInt();
+    // 管理端：先确定医生，再从「该医生名下已预约、且还没签到」的患者里选一个
+    doctor = doctorCombo_->count() > 0 ? doctorCombo_->currentData().toInt() : -1;
+    if (doctor < 0) {
+      notifier().warn(QStringLiteral("请先选择医生"));
+      return;
+    }
+
+    QStringList items;
+    QVector<int> cand;
+    for (int i = 0; i < h.bookings.size(); ++i) {
+      const Booking& b = h.bookings[i];
+      if (b.doctor != doctor || b.status != BOOKED) continue;
+      if (Queue::isWaiting(h, b.patient, doctor)) continue;  // 已经在队里了
+      if (cand.contains(b.patient)) continue;
+      cand.append(b.patient);
+      items << QStringLiteral("%1 · %2 %3")
+                   .arg(QString::fromUtf8(b.ticket), patientName(h, b.patient),
+                        QStringLiteral("%1%2").arg(dayText(b.day), slotText(b.slot)));
+    }
+    if (cand.isEmpty()) {
+      notifier().warn(QStringLiteral("%1 名下没有「已预约且未签到」的患者")
+                          .arg(doctorName(h, doctor)));
+      return;
+    }
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(
+        this, QStringLiteral("患者签到"),
+        QStringLiteral("选择要为哪位患者签到（只列 %1 名下已预约未签到的）：")
+            .arg(doctorName(h, doctor)),
+        items, 0, false, &ok);
+    if (!ok) return;
+    const int pos = items.indexOf(chosen);
+    if (pos < 0) return;
+    patient = cand[pos];
   } else {
     // 患者端：用当前选中的那条预约的医生
     patient = state().patient;
@@ -518,7 +495,6 @@ void QueuePage::onCallNext() {
   switch (r) {
     case QUEUE_OK:
       lastCalledPatient_ = patient;
-      patientCombo_->setCurrentIndex(patient);
       notifier().ok(QStringLiteral("叫号：%1 到 %2 就诊（排队号 %3）")
                         .arg(patientName(h, patient), doctorName(h, doctor))
                         .arg(Queue::queueNoOf(h, patient, doctor)));
@@ -535,15 +511,42 @@ void QueuePage::onCallNext() {
       break;
   }
   fillQueueTable();
+
+  // 把被叫到的那一行选中，医生接着点「就诊完成」时不会选错人
+  if (patient >= 0) {
+    int row = 0;
+    for (int i = 0; i < h.waiting.size(); ++i) {
+      if (h.waiting.at(i).doctor != doctor) continue;
+      if (h.waiting.at(i).patient == patient) {
+        table_->selectRow(row);
+        break;
+      }
+      ++row;
+    }
+  }
+}
+
+// 表格里选中那一行对应的患者；没选中返回 -1
+int QueuePage::selectedQueuePatient(int doctor) const {
+  Hospital& h = db();
+  const int row = table_->currentRow();
+  if (row < 0) return -1;
+  int idx = 0;
+  for (int i = 0; i < h.waiting.size(); ++i) {
+    if (h.waiting.at(i).doctor != doctor) continue;
+    if (idx == row) return h.waiting.at(i).patient;
+    ++idx;
+  }
+  return -1;
 }
 
 void QueuePage::onPass() {
   Hospital& h = db();
   const int doctor = doctorCombo_->currentData().toInt();
-  const int patient = lastCalledPatient_ >= 0 ? lastCalledPatient_
-                                              : patientCombo_->currentIndex();
+  int patient = selectedQueuePatient(doctor);   // 优先用表格里选中的那一行
+  if (patient < 0) patient = lastCalledPatient_;  // 否则用刚叫到的人
   if (doctor < 0 || patient < 0) {
-    notifier().warn(QStringLiteral("请先叫号，或在下拉框里选择要记过号的患者"));
+    notifier().warn(QStringLiteral("请先在队列表里选中一位患者，或先叫号"));
     return;
   }
   if (Queue::pass(h, patient, doctor))
@@ -561,9 +564,12 @@ void QueuePage::onPass() {
 void QueuePage::onFinish() {
   Hospital& h = db();
   const int doctor = doctorCombo_->currentData().toInt();
-  const int patient = lastCalledPatient_ >= 0 ? lastCalledPatient_
-                                              : patientCombo_->currentIndex();
-  if (doctor < 0 || patient < 0) return;
+  int patient = selectedQueuePatient(doctor);
+  if (patient < 0) patient = lastCalledPatient_;
+  if (doctor < 0 || patient < 0) {
+    notifier().warn(QStringLiteral("请先在队列表里选中一位患者，或先叫号"));
+    return;
+  }
 
   const QueueResult r = Queue::finish(h, patient, doctor);
   if (r == QUEUE_OK) {

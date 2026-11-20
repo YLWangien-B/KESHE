@@ -16,7 +16,6 @@
 
 #include "qt_widgets.h"
 
-class QCheckBox;
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -37,20 +36,18 @@ class QueuePage : public PageBase {
   void onPass();
   void onFinish();
   void onDoctorChanged(int index);
-  void onPatientChanged(int index);
   void onMyBookingClicked(int row, int col);
 
  private:
   void rebuildDoctorCombo();    // 管理端：按患者过滤医生下拉框
+  int selectedQueuePatient(int doctor) const;  // 表格里选中那一行的患者
   void fillQueueTable();        // 管理端：该医生的队伍
   void fillMyBookings();        // 患者端：我的预约 + 排队状态
   void updateMyQueueStatus();   // 患者端：下方「我的候诊状态」
 
   // ---- 管理端 ----
-  QComboBox* patientCombo_ = nullptr;
   QComboBox* doctorCombo_ = nullptr;
   QTableWidget* table_ = nullptr;
-  QCheckBox* showAllDoctors_ = nullptr;  // 取消勾选时只列该患者预约过的医生
   QLabel* summary_ = nullptr;
   int lastCalledPatient_ = -1;  // 最近一次叫到的人，「就诊完成」默认操作他
 
