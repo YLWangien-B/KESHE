@@ -52,6 +52,14 @@ ManagePage::ManagePage(QWidget* parent) : PageBase(parent) {
   summary_ = makeHint(QString());
   layout->addWidget(summary_);
 
+  // 说清评价条件 —— 否则用户看到「评价」按钮一直是灰的，会以为没做这个功能。
+  layout->addWidget(makeHint(QStringLiteral(
+      "<b>怎么评价医生：</b>先选中一条状态为「已完成」、"
+      "「评价」列显示「<span style='color:#d8b050;'>待评价</span>」的记录，"
+      "再点「评价选中的就诊」。<br>"
+      "「已完成」由管理端在「候诊队列」里点「就诊完成」后产生；"
+      "评价会计入医生评分，并影响推荐排序（评分占综合分 50%）。")));
+
   // ---- 记录表 ----
   table_ = new QTableWidget(this);
   setupReadOnlyTable(table_, 0, 7,

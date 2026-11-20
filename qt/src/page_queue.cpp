@@ -13,6 +13,7 @@
 
 #include "service_queue.h"
 #include "qt_common.h"
+#include "qt_role.h"
 
 namespace qt {
 
@@ -40,12 +41,21 @@ QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
   auto* inBtn = new QPushButton(QStringLiteral("患者签到排队"), this);
   inBtn->setDefault(true);
   row->addWidget(inBtn);
-  auto* callBtn = new QPushButton(QStringLiteral("叫下一位"), this);
-  row->addWidget(callBtn);
-  auto* passBtn = new QPushButton(QStringLiteral("过号处理"), this);
-  row->addWidget(passBtn);
-  auto* finishBtn = new QPushButton(QStringLiteral("就诊完成"), this);
-  row->addWidget(finishBtn);
+
+  // 叫号 / 过号 / 就诊完成是**医生的操作**，只有管理端该出现。
+  // 患者端只要能签到、能看自己前面还有几个人就够了 ——
+  // 让患者能替医生叫号既不合逻辑，也容易误操作。
+  QPushButton* callBtn = nullptr;
+  QPushButton* passBtn = nullptr;
+  QPushButton* finishBtn = nullptr;
+  if (isAdmin()) {
+    callBtn = new QPushButton(QStringLiteral("叫下一位"), this);
+    row->addWidget(callBtn);
+    passBtn = new QPushButton(QStringLiteral("过号处理"), this);
+    row->addWidget(passBtn);
+    finishBtn = new QPushButton(QStringLiteral("就诊完成"), this);
+    row->addWidget(finishBtn);
+  }
 
   row->addStretch(1);
   summary_ = makeHint(QString());
@@ -66,9 +76,9 @@ QueuePage::QueuePage(QWidget* parent) : PageBase(parent) {
   layout->addWidget(table_, 1);
 
   connect(inBtn, &QPushButton::clicked, this, &QueuePage::onCheckIn);
-  connect(callBtn, &QPushButton::clicked, this, &QueuePage::onCallNext);
-  connect(passBtn, &QPushButton::clicked, this, &QueuePage::onPass);
-  connect(finishBtn, &QPushButton::clicked, this, &QueuePage::onFinish);
+  if (callBtn) connect(callBtn, &QPushButton::clicked, this, &QueuePage::onCallNext);
+  if (passBtn) connect(passBtn, &QPushButton::clicked, this, &QueuePage::onPass);
+  if (finishBtn) connect(finishBtn, &QPushButton::clicked, this, &QueuePage::onFinish);
   connect(doctorCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
           &QueuePage::onDoctorChanged);
 }
